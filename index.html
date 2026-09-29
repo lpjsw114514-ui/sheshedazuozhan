@@ -13,7 +13,7 @@
   <div class="card">
     <div class="logo">🐍</div>
     <h1>蛇蛇大作战</h1>
-    <p class="sub">SNAKE ARENA · 400×400 大世界</p>
+    <p class="sub">SNAKE ARENA · 离线版</p>
     <div class="field">
       <input id="nickInput" type="text" maxlength="8" placeholder="取个名字（最多 8 位）" autocomplete="off">
       <button class="btn" id="btnEnter">进 入 游 戏</button>
@@ -25,70 +25,45 @@
 <div class="screen" id="scr-menu">
   <div class="topbar">
     <span class="me">🐍 <b id="menuNick"></b></span>
-    <span class="status" id="connStatus">本地联机就绪</span>
+    <span class="status">离线模式</span>
   </div>
 
-  <div class="menu-grid">
-    <div class="card">
-      <h2>🏠 创建房间</h2>
-      <p>生成 6 位房间号，其他标签页凭号加入</p>
-      <button class="btn" id="btnCreate" style="width:100%">创建房间</button>
-    </div>
-    <div class="card">
-      <h2>🚪 加入房间</h2>
-      <p>输入房主提供的 6 位数字房间号</p>
-      <div class="row">
-        <input id="joinCode" type="tel" maxlength="6" inputmode="numeric" placeholder="000000">
-        <button class="btn" id="btnJoin">加入</button>
-      </div>
-    </div>
-  </div>
+  <div class="mode-grid">
+    <button class="mode-card" id="btnOffline">
+      <div class="mode-icon">🎮</div>
+      <div class="mode-title">离线游戏</div>
+      <div class="mode-desc">单机挑战 AI 蛇群，无需联网</div>
+      <div class="mode-arrow">→</div>
+    </button>
 
-  <div class="card devices">
-    <h2>📡 在线玩家 <span class="cnt" id="devCount">(0)</span></h2>
-    <ul id="deviceList"><li class="empty">正在搜索本机打开的游戏页面…</li></ul>
+    <button class="mode-card disabled" id="btnOnline">
+      <div class="mode-icon">🌐</div>
+      <div class="mode-title">在线对战</div>
+      <div class="mode-desc">创建或加入房间，与好友同乐</div>
+      <div class="mode-badge">暂未支持</div>
+    </button>
   </div>
 
   <p class="hintbar">
-    💡 无需服务器：把这三个文件放到任意静态网页空间，或直接双击打开 index.html。
-    在同一浏览器中打开多个标签页即可多人对战。
-    （跨设备联机需要 WebRTC 信令，纯前端无法自动发现局域网设备）
+    💡 离线版：与 5 条 AI 蛇同场竞技，吃苹果、香蕉、番茄成长。
+    撞墙或撞到其他蛇即淘汰，3 秒后在随机位置重生。
   </p>
 </div>
 
-<!-- ========== 3. 房间大厅 ========== -->
-<div class="screen" id="scr-lobby">
-  <div class="card" style="text-align:center">
-    <h2 style="justify-content:center">房间号</h2>
-    <div class="code-row">
-      <div class="code" id="roomCode">------</div>
-      <button class="btn ghost" id="btnCopy">复制</button>
-    </div>
-    <div class="copy-tip">把房间号告诉好友，让他们输入加入</div>
-  </div>
-
-  <div class="card">
-    <h2>👥 房间成员 <span class="cnt" id="lobbyCount">(0)</span></h2>
-    <ul id="lobbyPlayers"></ul>
-  </div>
-
-  <div class="lobby-actions">
-    <button class="btn" id="btnStartGame">开始游戏</button>
-    <p id="waitTip">等待房主开始游戏…</p>
-    <button class="btn ghost" id="btnLeave">← 离开房间</button>
-  </div>
-</div>
-
-<!-- ========== 4. 游戏 ========== -->
+<!-- ========== 3. 游戏 ========== -->
 <div class="screen" id="scr-game">
   <div id="gameWrap"><canvas id="canvas"></canvas></div>
 
   <div class="hud">
     <div class="hud-left">
-      <span class="room-tag">房间 <b id="hudRoom">------</b></span>
       <span class="score">得分 <b id="hudScore">0</b></span>
+      <span class="score">长度 <b id="hudLength">5</b></span>
+      <span class="score">排名 <b id="hudRank">1</b>/<span id="hudTotal">6</span></span>
     </div>
-    <button class="btn ghost" id="btnExit">退出</button>
+    <div class="hud-right">
+      <button class="btn ghost" id="btnPause">暂停</button>
+      <button class="btn ghost" id="btnExitGame">退出</button>
+    </div>
   </div>
 
   <div class="players-panel" id="playersPanel"></div>
@@ -97,7 +72,16 @@
     <div class="respawn-box">
       <div class="dead-icon">💀</div>
       <div class="msg">你被淘汰了</div>
-      <div class="countdown" id="respawnCount">5.0</div>
+      <div class="countdown" id="respawnCount">3.0</div>
+    </div>
+  </div>
+
+  <div class="pause-overlay" id="pauseOverlay">
+    <div class="pause-box">
+      <div class="pause-icon">⏸</div>
+      <div class="msg">游戏已暂停</div>
+      <button class="btn" id="btnResume">继续游戏</button>
+      <button class="btn ghost" id="btnRestart">重新开始</button>
     </div>
   </div>
 </div>
