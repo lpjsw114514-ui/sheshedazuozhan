@@ -275,6 +275,11 @@ input::placeholder{color:#4d6284}
 .pane{display:flex;flex-direction:column;gap:10px}
 .pane .btn{width:100%}
 .step{font-size:13px;font-weight:700;color:#5ee7a0;margin-top:2px;letter-spacing:.5px}
+.code-meta{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.code-meta span{font-size:11px;color:#5f78a0;font-variant-numeric:tabular-nums}
+.pane-label{font-size:12px;font-weight:600;color:#9fb6d8}
+.pane input[type=text]{padding:10px 12px;font-size:13px;border-radius:10px}
+.divider{border:none;border-top:1px dashed rgba(96,140,210,.25);margin:2px 0}
 .pane textarea{
   width:100%;padding:10px 12px;border-radius:10px;font-size:11px;line-height:1.5;
   background:rgba(10,16,28,.9);border:1px solid rgba(96,140,210,.25);color:#9fb6d8;

@@ -143,24 +143,32 @@
       <div class="pane" id="paneHost">
         <div class="step">第 1 步 · 创建房间，把邀请码发给同学（QQ/微信即可）</div>
         <button class="btn" id="btnCreateRoom">创建房间</button>
-        <textarea id="inviteCode" rows="4" readonly placeholder="邀请码将显示在这里"></textarea>
-        <button class="btn ghost" id="btnCopyInvite">📋 复制邀请码</button>
+        <textarea id="inviteCode" rows="3" readonly placeholder="邀请码将显示在这里（已压缩，约 1KB）"></textarea>
+        <div class="code-meta"><span id="inviteLen"></span><button class="btn ghost small" id="btnCopyInvite">📋 复制邀请码</button></div>
         <div class="step">第 2 步 · 把同学的回传码粘贴进来</div>
-        <textarea id="answerIn" rows="4" placeholder="粘贴同学回传的「应答码」"></textarea>
+        <textarea id="answerIn" rows="3" placeholder="粘贴同学回传的「应答码」"></textarea>
         <button class="btn" id="btnAcceptAnswer">✅ 确认该同学连接</button>
         <div class="step">第 3 步 · 人齐了就进游戏</div>
         <button class="btn" id="btnHostStart">🎮 进入游戏</button>
+        <hr class="divider">
+        <label class="pane-label" for="hostIp">本机局域网 IP（可选，连不上时填写）</label>
+        <input type="text" id="hostIp" maxlength="15" placeholder="如 192.168.1.5，不知道可留空" autocomplete="off">
+        <p class="online-tip">查看方法：Win+R → 输入 cmd → 输入 ipconfig → 看「IPv4 地址」。<br>填写后邀请码会带上真实 IP，可解决浏览器隐藏本机 IP 导致的连不上。</p>
         <p class="online-tip">每来一位新同学，需再点一次「创建房间」生成新邀请码。<br>房主刷新页面 = 房间解散；房主页面请保持前台打开。</p>
       </div>
 
       <!-- 同学 -->
       <div class="pane" id="paneGuest" hidden>
         <div class="step">第 1 步 · 粘贴房主发来的邀请码</div>
-        <textarea id="inviteIn" rows="4" placeholder="粘贴房主的「邀请码」"></textarea>
+        <textarea id="inviteIn" rows="3" placeholder="粘贴房主的「邀请码」"></textarea>
         <button class="btn" id="btnJoinRoom">🔑 生成我的应答码</button>
         <div class="step">第 2 步 · 把应答码发回给房主</div>
-        <textarea id="answerCode" rows="4" readonly placeholder="应答码将显示在这里"></textarea>
-        <button class="btn ghost" id="btnCopyAnswer">📋 复制应答码</button>
+        <textarea id="answerCode" rows="3" readonly placeholder="应答码将显示在这里（已压缩，约 1KB）"></textarea>
+        <div class="code-meta"><span id="answerLen"></span><button class="btn ghost small" id="btnCopyAnswer">📋 复制应答码</button></div>
+        <hr class="divider">
+        <label class="pane-label" for="guestIp">本机局域网 IP（可选，连不上时填写）</label>
+        <input type="text" id="guestIp" maxlength="15" placeholder="如 192.168.1.8，不知道可留空" autocomplete="off">
+        <p class="online-tip">查看方法：Win+R → 输入 cmd → 输入 ipconfig → 看「IPv4 地址」。</p>
         <p class="online-tip">发给房主后等他点「确认连接」，收到游戏画面即自动进房。</p>
       </div>
     </div>

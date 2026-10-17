@@ -1234,6 +1234,13 @@ Net.on.message = (peerId, msg) => {
 };
 
 /* ---------- 联机大厅 UI ---------- */
+let hostWatchdog = null, guestWatchdog = null;
+
+function showCodeLen(el, code){
+  const kb = (code.length / 1024).toFixed(2);
+  el.textContent = '码长 ' + kb + ' KB';
+}
+
 function switchOnlineTab(t){
   document.getElementById('tabHost').classList.toggle('active', t === 'host');
   document.getElementById('tabGuest').classList.toggle('active', t === 'guest');
@@ -1248,16 +1255,24 @@ document.getElementById('btnCreateRoom').addEventListener('click', async () => {
   S.online = true;
   S.role = 'host';
   if (!S.game) createGame();
-  const code = await Net.createInvite();
-  document.getElementById('inviteCode').value = code;
-  toast('房间已创建，把邀请码发给同学');
+  const r = await Net.createInvite(document.getElementById('hostIp').value);
+  document.getElementById('inviteCode').value = r.code;
+  showCodeLen(document.getElementById('inviteLen'), r.code);
+  if (r.mdns) toast('房间已创建。注意：浏览器隐藏了本机 IP，若同学连不上请填写本机 IP 后重新创建');
+  else toast('房间已创建，把邀请码发给同学');
 });
 document.getElementById('btnCopyInvite').addEventListener('click', () => copyText(document.getElementById('inviteCode')));
 document.getElementById('btnAcceptAnswer').addEventListener('click', async () => {
   const r = await Net.acceptAnswer(document.getElementById('answerIn').value);
   if (r.ok){
     document.getElementById('answerIn').value = '';
-    toast('已确认，等待同学接入');
+    toast('已确认，等待同学接入…');
+    clearTimeout(hostWatchdog);
+    hostWatchdog = setTimeout(() => {
+      if (!Net.isPeerOpen(r.id)){
+        toast('连接超时：让同学检查邀请码是否复制完整；仍不行就双方填写本机 IP 后重试');
+      }
+    }, 15000);
   } else {
     toast(r.err);
   }
@@ -1269,7 +1284,10 @@ document.getElementById('btnHostStart').addEventListener('click', () => {
 document.getElementById('btnJoinRoom').addEventListener('click', async () => {
   S.online = true;
   S.role = 'guest';
-  const r = await Net.joinWithCode(document.getElementById('inviteIn').value);
+  const r = await Net.joinWithCode(
+    document.getElementById('inviteIn').value,
+    document.getElementById('guestIp').value
+  );
   if (!r.ok){
     S.online = false;
     S.role = null;
@@ -1277,7 +1295,15 @@ document.getElementById('btnJoinRoom').addEventListener('click', async () => {
     return;
   }
   document.getElementById('answerCode').value = r.code;
-  toast('应答码已生成，发给房主后等待确认');
+  showCodeLen(document.getElementById('answerLen'), r.code);
+  if (r.mdns) toast('应答码已生成。注意：浏览器隐藏了本机 IP，若连不上请填写本机 IP 后重新生成');
+  else toast('应答码已生成，发给房主后等待确认');
+  clearTimeout(guestWatchdog);
+  guestWatchdog = setTimeout(() => {
+    if (!Net.hostReady()){
+      toast('等待超时：请确认房主已点「确认连接」；仍不行就双方填写本机 IP 后重试');
+    }
+  }, 15000);
 });
 document.getElementById('btnCopyAnswer').addEventListener('click', () => copyText(document.getElementById('answerCode')));
 
