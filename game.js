@@ -1152,6 +1152,7 @@ function hostRestart(){
   for (const [id, meta] of metas){
     const rs = spawnRemoteSnake(id, meta.name, meta.color);
     S.netPeers.set(id, rs);
+    S.game.remotes.push(rs);
     Net.sendToPeer(id, { t: 'welcome', seed: S.seed, foodId: foodId, ai: AI_COUNT });
   }
   toast('已重新开始，新种子已同步');
@@ -1176,6 +1177,7 @@ Net.on.peerOpen = (peerId) => {
   S.peerMeta.set(peerId, { name, color });
   const rs = spawnRemoteSnake(peerId, name, color);
   S.netPeers.set(peerId, rs);
+  S.game.remotes.push(rs);   // 必须登记：allSnakes() 靠它遍历，否则房主不推进同学蛇
   // 欢迎包：种子 + 食物计数器 + 已被吃掉的初始食物 id
   let eaten = null;
   if (S.game.initFoodCount && S.game.initFoodCount <= 4000){
