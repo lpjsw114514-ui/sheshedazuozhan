@@ -13,7 +13,7 @@
   <div class="card">
     <div class="logo">🐍</div>
     <h1>蛇蛇大作战</h1>
-    <p class="sub">SNAKE ARENA · 离线版</p>
+    <p class="sub">SNAKE ARENA · 离线版 · 1600×1600 大世界</p>
     <div class="field">
       <input id="nickInput" type="text" maxlength="8" placeholder="取个名字（最多 8 位）" autocomplete="off">
       <button class="btn" id="btnEnter">进 入 游 戏</button>
@@ -44,9 +44,45 @@
     </button>
   </div>
 
+  <!-- 食物密度设置 -->
+  <div class="card setting-card">
+    <div class="setting-header">
+      <h2 class="setting-title">🍎 食物密度设置</h2>
+      <button class="btn ghost small" id="btnResetSetting">重置</button>
+    </div>
+    <p class="setting-desc">每 <b>5×5（25 格）</b> 区域内随机生成的食物数量范围</p>
+
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">最少</span>
+        <span class="setting-value" id="minValue">1</span>
+      </div>
+      <input type="range" id="foodMin" min="1" max="7" step="1" value="1" class="slider">
+      <div class="setting-ticks">
+        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">最多</span>
+        <span class="setting-value" id="maxValue">7</span>
+      </div>
+      <input type="range" id="foodMax" min="1" max="7" step="1" value="7" class="slider">
+      <div class="setting-ticks">
+        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span>
+      </div>
+    </div>
+
+    <div class="setting-summary" id="settingSummary">
+      当前设置：每 25 格 <b>1 ~ 7</b> 个食物
+    </div>
+  </div>
+
   <p class="hintbar">
-    💡 离线版：与 5 条 AI 蛇同场竞技，吃苹果、香蕉、番茄成长。
-    撞墙或撞到其他蛇即淘汰，3 秒后在随机位置重生。
+    💡 离线版：与 5 条 AI 蛇在 1600×1600 大世界中竞技。
+    碰到边界、自己或其他蛇即死亡，死亡时会在原蛇身位置掉落吃过的食物。
+    3 秒后在随机位置重生。
   </p>
 </div>
 
@@ -59,6 +95,7 @@
       <span class="score">得分 <b id="hudScore">0</b></span>
       <span class="score">长度 <b id="hudLength">5</b></span>
       <span class="score">排名 <b id="hudRank">1</b>/<span id="hudTotal">6</span></span>
+      <span class="score food-info">食物 <b id="hudFoodRange">1~7</b></span>
     </div>
     <div class="hud-right">
       <button class="btn ghost" id="btnPause">暂停</button>

@@ -1,20 +1,28 @@
 'use strict';
 
 /* =========================================================
-   蛇蛇大作战 · 离线版
+   蛇蛇大作战 · 离线版 · 1600×1600 · 自定义食物密度
    ========================================================= */
 
 /* ---------------- 常量 ---------------- */
-const W = 80, H = 60;              // 地图大小（格）
-const CELL = 20;                   // 每格像素
-const TICK_MS = 110;               // 逻辑帧间隔
-const FOOD_COUNT = 200;            // 食物数量
+const W = 1600, H = 1600;
+const CELL = 20;
+const TICK_MS = 90;
 const FOOD_TYPES = ['🍎', '🍌', '🍅'];
 const COLORS = ['#5ee7a0','#5bc8ff','#a78bfa','#ffd93d','#ff7b7b','#ff9f5b','#4de3d1','#f472b6'];
 const START_LEN = 5;
 const AI_COUNT = 5;
 const RESPAWN_MS = 3000;
 const NICK_KEY = 'snake_arena_nick';
+const FOOD_SETTING_KEY = 'snake_arena_food_setting';
+
+/* 食物密度默认值：每 5×5 区域 1~7 个 */
+const FOOD_GRID = 5;
+const DEFAULT_FOOD_MIN = 1;
+const DEFAULT_FOOD_MAX = 7;
+
+/* 空间哈希桶 */
+const BUCKET_SIZE = 16;
 
 const DIRS = {
   up:    { x: 0, y: -1 },
@@ -38,13 +46,16 @@ const S = {
   tickTimer: null,
   renderRunning: false,
   lastTickTime: 0,
+  // 食物密度设置
+  foodMin: DEFAULT_FOOD_MIN,
+  foodMax: DEFAULT_FOOD_MAX,
 };
 
 let foodId = 0;
 
 /* ---------------- 工具 ---------------- */
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
-function wrap(v, max){ return ((v % max) + max) % max; }
+function inBounds(x, y){ return x >= 0 && x < W && y >= 0 && y < H; }
 
 let toastTimer = null;
 function toast(msg){
@@ -67,6 +78,72 @@ function saveNick(n){
   try { localStorage.setItem(NICK_KEY, n); } catch(e){}
 }
 
+/* ---------- 食物密度设置持久化 ---------- */
+function loadFoodSetting(){
+  try {
+    const raw = localStorage.getItem(FOOD_SETTING_KEY);
+    if (raw){
+      const obj = JSON.parse(raw);
+      if (typeof obj.min === 'number' && typeof obj.max === 'number'){
+        S.foodMin = clamp(obj.min, 1, 7);
+        S.foodMax = clamp(obj.max, 1, 7);
+        if (S.foodMin > S.foodMax) S.foodMin = S.foodMax;
+        return;
+      }
+    }
+  } catch(e){}
+  S.foodMin = DEFAULT_FOOD_MIN;
+  S.foodMax = DEFAULT_FOOD_MAX;
+}
+function saveFoodSetting(){
+  try {
+    localStorage.setItem(FOOD_SETTING_KEY, JSON.stringify({
+      min: S.foodMin, max: S.foodMax,
+    }));
+  } catch(e){}
+}
+
+/* =========================================================
+   空间哈希：食物桶
+   ========================================================= */
+function bucketKey(x, y){
+  return Math.floor(x / BUCKET_SIZE) + ',' + Math.floor(y / BUCKET_SIZE);
+}
+function addFoodToBucket(f){
+  const k = bucketKey(f.x, f.y);
+  let set = S.game.foodBuckets.get(k);
+  if (!set){ set = new Set(); S.game.foodBuckets.set(k, set); }
+  set.add(f);
+}
+function removeFoodFromBucket(f){
+  const k = bucketKey(f.x, f.y);
+  const set = S.game.foodBuckets.get(k);
+  if (set){
+    set.delete(f);
+    if (set.size === 0) S.game.foodBuckets.delete(k);
+  }
+}
+function findNearestFood(x, y, maxRadius){
+  const cx = Math.floor(x / BUCKET_SIZE);
+  const cy = Math.floor(y / BUCKET_SIZE);
+  for (let r = 0; r <= maxRadius; r++){
+    let best = null, bestDist = Infinity;
+    for (let bx = cx - r; bx <= cx + r; bx++){
+      for (let by = cy - r; by <= cy + r; by++){
+        if (r > 0 && Math.abs(bx - cx) !== r && Math.abs(by - cy) !== r) continue;
+        const set = S.game.foodBuckets.get(bx + ',' + by);
+        if (!set) continue;
+        for (const f of set){
+          const d = Math.abs(f.x - x) + Math.abs(f.y - y);
+          if (d < bestDist){ bestDist = d; best = f; }
+        }
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
 /* =========================================================
    游戏引擎
    ========================================================= */
@@ -81,13 +158,14 @@ function makeSnake(isPlayer, color){
     snake: [], prevSnake: [],
     dir: { x: 1, y: 0 }, nextDir: null,
     alive: true, score: 0, respawnAt: 0,
+    eatenTypes: [],
   };
 }
 
 function findSpawn(){
-  for (let attempt = 0; attempt < 200; attempt++){
-    const x = 8 + Math.floor(Math.random() * (W - 16));
-    const y = 8 + Math.floor(Math.random() * (H - 16));
+  for (let attempt = 0; attempt < 300; attempt++){
+    const x = 12 + Math.floor(Math.random() * (W - 24));
+    const y = 12 + Math.floor(Math.random() * (H - 24));
     let ok = true;
     for (const s of allSnakes()){
       if (!s.alive || !s.snake.length) continue;
@@ -99,8 +177,8 @@ function findSpawn(){
     if (ok) return { x, y };
   }
   return {
-    x: 15 + Math.floor(Math.random() * (W - 30)),
-    y: 15 + Math.floor(Math.random() * (H - 30)),
+    x: 20 + Math.floor(Math.random() * (W - 40)),
+    y: 20 + Math.floor(Math.random() * (H - 40)),
   };
 }
 
@@ -108,7 +186,9 @@ function respawnSnake(s){
   const pos = findSpawn();
   const body = [];
   for (let i = 0; i < START_LEN; i++){
-    body.push({ x: wrap(pos.x - i, W), y: pos.y });
+    let x = pos.x - i;
+    if (x < 0) x = 0;
+    body.push({ x, y: pos.y });
   }
   s.snake = body;
   s.prevSnake = body.map(p => ({ ...p }));
@@ -117,6 +197,60 @@ function respawnSnake(s){
   s.alive = true;
   s.score = 0;
   s.respawnAt = 0;
+  s.eatenTypes = [];
+}
+
+/* ---------- 批量生成食物：使用当前设置的密度 ---------- */
+function generateAllFood(){
+  S.game.foods.clear();
+  S.game.foodBuckets.clear();
+
+  const cols = Math.ceil(W / FOOD_GRID);
+  const rows = Math.ceil(H / FOOD_GRID);
+  const min = S.foodMin;
+  const max = S.foodMax;
+  const range = Math.max(1, max - min + 1);
+
+  for (let cx = 0; cx < cols; cx++){
+    for (let cy = 0; cy < rows; cy++){
+      const count = min + Math.floor(Math.random() * range);
+      for (let i = 0; i < count; i++){
+        let placed = false;
+        for (let attempt = 0; attempt < 8; attempt++){
+          const x = cx * FOOD_GRID + Math.floor(Math.random() * FOOD_GRID);
+          const y = cy * FOOD_GRID + Math.floor(Math.random() * FOOD_GRID);
+          if (x >= W || y >= H) continue;
+          const key = x + ',' + y;
+          if (S.game.foods.has(key)) continue;
+          const f = {
+            id: ++foodId, x, y,
+            e: Math.floor(Math.random() * FOOD_TYPES.length),
+          };
+          S.game.foods.set(key, f);
+          addFoodToBucket(f);
+          placed = true;
+          break;
+        }
+        if (!placed) break;
+      }
+    }
+  }
+}
+
+function respawnFoodNear(cx, cy){
+  for (let attempt = 0; attempt < 20; attempt++){
+    const x = clamp(cx + Math.floor(Math.random() * 11) - 5, 0, W - 1);
+    const y = clamp(cy + Math.floor(Math.random() * 11) - 5, 0, H - 1);
+    const key = x + ',' + y;
+    if (S.game.foods.has(key)) continue;
+    const f = {
+      id: ++foodId, x, y,
+      e: Math.floor(Math.random() * FOOD_TYPES.length),
+    };
+    S.game.foods.set(key, f);
+    addFoodToBucket(f);
+    return;
+  }
 }
 
 function createGame(){
@@ -124,57 +258,61 @@ function createGame(){
     player: makeSnake(true, COLORS[0]),
     ai: [],
     foods: new Map(),
+    foodBuckets: new Map(),
   };
   for (let i = 0; i < AI_COUNT; i++){
     S.game.ai.push(makeSnake(false, COLORS[(i + 1) % COLORS.length]));
   }
   respawnSnake(S.game.player);
   for (const a of S.game.ai) respawnSnake(a);
-  for (let i = 0; i < FOOD_COUNT; i++) spawnFood();
+  generateAllFood();
   S.lastTickTime = performance.now();
   S.camInit = false;
-}
-
-function spawnFood(){
-  let tries = 0;
-  while (tries < 30){
-    const x = Math.floor(Math.random() * W);
-    const y = Math.floor(Math.random() * H);
-    const key = x + ',' + y;
-    if (!S.game.foods.has(key)){
-      S.game.foods.set(key, {
-        id: ++foodId, x, y,
-        e: Math.floor(Math.random() * FOOD_TYPES.length),
-      });
-      return;
-    }
-    tries++;
-  }
 }
 
 function findFoodAt(x, y){
   return S.game.foods.get(x + ',' + y);
 }
 
-/* ---------------- AI 思考 ---------------- */
+function dropEatenFood(s){
+  const g = S.game;
+  if (!g) return;
+  const types = s.eatenTypes || [];
+  for (const seg of s.snake){
+    const key = seg.x + ',' + seg.y;
+    if (g.foods.has(key)) continue;
+    const e = types.length > 0
+      ? types.pop()
+      : Math.floor(Math.random() * FOOD_TYPES.length);
+    const f = { id: ++foodId, x: seg.x, y: seg.y, e };
+    g.foods.set(key, f);
+    addFoodToBucket(f);
+  }
+  s.eatenTypes = [];
+}
+
+/* =========================================================
+   AI 思考
+   ========================================================= */
 function aiChooseDir(ai){
   const head = ai.snake[0];
+  const nearest = findNearestFood(head.x, head.y, 6);
+
   const dirs = [
     { x: 1, y: 0 }, { x: -1, y: 0 },
     { x: 0, y: 1 }, { x: 0, y: -1 },
   ];
 
-  let nearest = null, minDist = Infinity;
-  for (const f of S.game.foods.values()){
-    const d = Math.abs(f.x - head.x) + Math.abs(f.y - head.y);
-    if (d < minDist){ minDist = d; nearest = f; }
-  }
-
   const scored = [];
   for (const d of dirs){
     if (d.x === -ai.dir.x && d.y === -ai.dir.y) continue;
-    const nx = wrap(head.x + d.x, W);
-    const ny = wrap(head.y + d.y, H);
+    const nx = head.x + d.x;
+    const ny = head.y + d.y;
+
+    if (!inBounds(nx, ny)){
+      scored.push({ d, score: -9999 });
+      continue;
+    }
 
     let collision = false;
     for (const s of allSnakes()){
@@ -203,12 +341,13 @@ function aiChooseDir(ai){
   return scored[0].d;
 }
 
-/* ---------------- 逻辑 tick ---------------- */
+/* =========================================================
+   逻辑 tick
+   ========================================================= */
 function tick(){
   if (!S.game || S.paused) return;
   const g = S.game;
 
-  // 1. 应用方向
   for (const s of allSnakes()){
     if (!s.alive) continue;
     if (s.nextDir){
@@ -219,31 +358,29 @@ function tick(){
     }
   }
 
-  // 2. AI 思考
   for (const ai of g.ai){
     if (!ai.alive) continue;
     ai.dir = aiChooseDir(ai);
   }
 
-  // 3. 计算新蛇头
   const newHeads = new Map();
   for (const s of allSnakes()){
     if (!s.alive) continue;
     const h = s.snake[0];
-    newHeads.set(s, {
-      x: wrap(h.x + s.dir.x, W),
-      y: wrap(h.y + s.dir.y, H),
-    });
+    newHeads.set(s, { x: h.x + s.dir.x, y: h.y + s.dir.y });
   }
 
-  // 4. 碰撞检测
   const dead = new Set();
   for (const s of allSnakes()){
     if (!s.alive) continue;
     const nh = newHeads.get(s);
+
+    if (!inBounds(nh.x, nh.y)){ dead.add(s); continue; }
+
     for (let i = 1; i < s.snake.length; i++){
       if (s.snake[i].x === nh.x && s.snake[i].y === nh.y){ dead.add(s); break; }
     }
+
     for (const o of allSnakes()){
       if (o === s || !o.alive) continue;
       for (let i = 0; i < o.snake.length; i++){
@@ -256,16 +393,17 @@ function tick(){
     }
   }
 
-  // 5. 应用移动 / 吃食物
+  const now = performance.now();
   for (const s of allSnakes()){
     if (!s.alive) continue;
     s.prevSnake = s.snake;
 
     if (dead.has(s)){
+      dropEatenFood(s);
       s.alive = false;
       s.score = 0;
       s.snake = [];
-      s.respawnAt = performance.now() + RESPAWN_MS;
+      s.respawnAt = now + RESPAWN_MS;
       continue;
     }
 
@@ -274,29 +412,30 @@ function tick(){
     const f = findFoodAt(nh.x, nh.y);
     if (f){
       g.foods.delete(nh.x + ',' + nh.y);
+      removeFoodFromBucket(f);
       s.score++;
-      spawnFood();
+      s.eatenTypes.push(f.e);
+      respawnFoodNear(nh.x, nh.y);
     } else {
       newSnake.pop();
     }
     s.snake = newSnake;
   }
 
-  // 6. 重生
-  const now = performance.now();
+  const now2 = performance.now();
   for (const s of allSnakes()){
-    if (!s.alive && s.respawnAt && now >= s.respawnAt) respawnSnake(s);
+    if (!s.alive && s.respawnAt && now2 >= s.respawnAt) respawnSnake(s);
   }
 
-  S.lastTickTime = now;
+  S.lastTickTime = now2;
 }
 
 /* =========================================================
    渲染
    ========================================================= */
 function resizeCanvas(){
-  const maxW = Math.min(1200, window.innerWidth - 20);
-  const maxH = Math.min(800, window.innerHeight - 20);
+  const maxW = Math.min(1280, window.innerWidth - 20);
+  const maxH = Math.min(820, window.innerHeight - 20);
   canvas.width = Math.max(320, Math.floor(maxW));
   canvas.height = Math.max(240, Math.floor(maxH));
   canvas.style.width = canvas.width + 'px';
@@ -312,8 +451,9 @@ function updateCamera(){
   const p = S.game.player;
   if (!p.snake.length) return;
   const h = p.snake[0];
-  const tx = clamp(h.x * CELL + CELL / 2 - canvas.width / 2, 0, Math.max(0, W * CELL - canvas.width));
-  const ty = clamp(h.y * CELL + CELL / 2 - canvas.height / 2, 0, Math.max(0, H * CELL - canvas.height));
+  const worldW = W * CELL, worldH = H * CELL;
+  const tx = clamp(h.x * CELL + CELL / 2 - canvas.width / 2, 0, Math.max(0, worldW - canvas.width));
+  const ty = clamp(h.y * CELL + CELL / 2 - canvas.height / 2, 0, Math.max(0, worldH - canvas.height));
   if (!S.camInit){ S.camX = tx; S.camY = ty; S.camInit = true; }
   else {
     S.camX += (tx - S.camX) * 0.22;
@@ -377,7 +517,6 @@ function drawSnake(s, t){
   }
   ctx.shadowBlur = 0;
 
-  // 眼睛
   const h = cur[0];
   let hx = h.x * CELL + CELL / 2, hy = h.y * CELL + CELL / 2;
   if (canLerp){
@@ -400,7 +539,6 @@ function drawSnake(s, t){
   ctx.beginPath(); ctx.arc(hx + fx + ox + d.x * 1, hy + fy + oy + d.y * 1, 1.4, 0, 7); ctx.fill();
   ctx.beginPath(); ctx.arc(hx + fx - ox + d.x * 1, hy + fy - oy + d.y * 1, 1.4, 0, 7); ctx.fill();
 
-  // 玩家标记
   if (s.isPlayer){
     ctx.font = 'bold 11px system-ui,sans-serif';
     ctx.textAlign = 'center';
@@ -427,37 +565,46 @@ function draw(now){
   const y0 = Math.floor(S.camY / CELL) - 1;
   const y1 = Math.ceil((S.camY + ch) / CELL) + 1;
 
-  // 网格
-  ctx.strokeStyle = 'rgba(90,130,200,0.09)';
+  ctx.strokeStyle = 'rgba(90,130,200,0.08)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let x = x0; x <= x1; x++){
+  const step = 4;
+  for (let x = Math.max(0, Math.ceil(x0 / step) * step); x <= x1; x += step){
     if (x < 0 || x > W) continue;
     ctx.moveTo(x * CELL + .5, Math.max(0, y0 * CELL));
     ctx.lineTo(x * CELL + .5, Math.min(H * CELL, y1 * CELL));
   }
-  for (let y = y0; y <= y1; y++){
+  for (let y = Math.max(0, Math.ceil(y0 / step) * step); y <= y1; y += step){
     if (y < 0 || y > H) continue;
     ctx.moveTo(Math.max(0, x0 * CELL), y * CELL + .5);
     ctx.lineTo(Math.min(W * CELL, x1 * CELL), y * CELL + .5);
   }
   ctx.stroke();
 
-  // 边界
-  ctx.strokeStyle = 'rgba(120,170,255,0.4)';
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(120,170,255,0.55)';
+  ctx.lineWidth = 4;
   ctx.strokeRect(0, 0, W * CELL, H * CELL);
 
-  // 食物
   ctx.font = Math.round(CELL * 0.86) + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  for (const f of S.game.foods.values()){
-    if (f.x < x0 || f.x > x1 || f.y < y0 || f.y > y1) continue;
-    ctx.fillText(FOOD_TYPES[f.e], f.x * CELL + CELL / 2, f.y * CELL + CELL / 2 + 1);
+
+  const b0x = Math.floor(x0 / BUCKET_SIZE);
+  const b1x = Math.floor(x1 / BUCKET_SIZE);
+  const b0y = Math.floor(y0 / BUCKET_SIZE);
+  const b1y = Math.floor(y1 / BUCKET_SIZE);
+
+  for (let bx = b0x; bx <= b1x; bx++){
+    for (let by = b0y; by <= b1y; by++){
+      const set = S.game.foodBuckets.get(bx + ',' + by);
+      if (!set) continue;
+      for (const f of set){
+        if (f.x < x0 || f.x > x1 || f.y < y0 || f.y > y1) continue;
+        ctx.fillText(FOOD_TYPES[f.e], f.x * CELL + CELL / 2, f.y * CELL + CELL / 2 + 1);
+      }
+    }
   }
 
-  // 蛇（插值）
   const t = clamp((now - S.lastTickTime) / TICK_MS, 0, 1);
   for (const ai of S.game.ai){
     if (ai.alive && ai.snake.length) drawSnake(ai, t);
@@ -471,7 +618,7 @@ function draw(now){
 }
 
 function drawMinimap(){
-  const size = 150, pad = 16;
+  const size = 160, pad = 16;
   const mx = canvas.width - size - pad;
   const my = canvas.height - size - pad;
 
@@ -504,6 +651,15 @@ function drawMinimap(){
       ctx.lineWidth = 1.2;
       ctx.stroke();
     }
+  }
+
+  ctx.fillStyle = 'rgba(150,170,200,0.7)';
+  ctx.font = '10px system-ui,sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  const p = S.game.player;
+  if (p.snake.length){
+    ctx.fillText(`(${p.snake[0].x},${p.snake[0].y})`, mx + 6, my + 6);
   }
 }
 
@@ -555,6 +711,60 @@ function updateUI(){
 }
 
 /* =========================================================
+   食物密度设置 UI
+   ========================================================= */
+const foodMinInput = document.getElementById('foodMin');
+const foodMaxInput = document.getElementById('foodMax');
+const minValueEl = document.getElementById('minValue');
+const maxValueEl = document.getElementById('maxValue');
+const summaryEl = document.getElementById('settingSummary');
+
+function refreshSettingUI(){
+  minValueEl.textContent = S.foodMin;
+  maxValueEl.textContent = S.foodMax;
+  foodMinInput.value = S.foodMin;
+  foodMaxInput.value = S.foodMax;
+  summaryEl.innerHTML = `当前设置：每 25 格 <b>${S.foodMin} ~ ${S.foodMax}</b> 个食物`;
+
+  // 同步滑块样式（用渐变填充表示选择范围）
+  updateSliderFill(foodMinInput);
+  updateSliderFill(foodMaxInput);
+}
+
+function updateSliderFill(input){
+  const min = +input.min, max = +input.max, v = +input.value;
+  const pct = ((v - min) / (max - min)) * 100;
+  input.style.background = `linear-gradient(to right, #3ecf8e 0%, #2aa9e0 ${pct}%, rgba(96,140,210,.3) ${pct}%, rgba(96,140,210,.3) 100%)`;
+}
+
+foodMinInput.addEventListener('input', () => {
+  S.foodMin = +foodMinInput.value;
+  if (S.foodMin > S.foodMax){
+    S.foodMax = S.foodMin;
+    foodMaxInput.value = S.foodMax;
+  }
+  refreshSettingUI();
+  saveFoodSetting();
+});
+foodMaxInput.addEventListener('input', () => {
+  S.foodMax = +foodMaxInput.value;
+  if (S.foodMax < S.foodMin){
+    S.foodMin = S.foodMax;
+    foodMinInput.value = S.foodMin;
+  }
+  refreshSettingUI();
+  saveFoodSetting();
+});
+
+document.getElementById('btnResetSetting').addEventListener('click', () => {
+  S.foodMin = DEFAULT_FOOD_MIN;
+  S.foodMax = DEFAULT_FOOD_MAX;
+  refreshSettingUI();
+  saveFoodSetting();
+  toast('食物密度已重置为默认值 1 ~ 7');
+});
+
+/* =========================================================
    游戏控制
    ========================================================= */
 function startGame(){
@@ -563,6 +773,8 @@ function startGame(){
   showScreen('game');
   S.paused = false;
   document.getElementById('pauseOverlay').classList.remove('show');
+  // HUD 显示当前食物设置
+  document.getElementById('hudFoodRange').textContent = `${S.foodMin}~${S.foodMax}`;
 
   if (S.tickTimer) clearInterval(S.tickTimer);
   S.tickTimer = setInterval(tick, TICK_MS);
@@ -670,5 +882,8 @@ document.getElementById('btnRestart').addEventListener('click', startGame);
     S.nick = saved;
     document.getElementById('menuNick').textContent = saved;
   }
+  // 加载食物密度设置
+  loadFoodSetting();
+  refreshSettingUI();
   document.getElementById('nickInput').focus();
 })();

@@ -38,6 +38,7 @@ h1{font-size:38px;letter-spacing:4px;
   padding:8px 14px;font-size:13px;font-weight:600;
 }
 .btn.ghost:hover{background:rgba(96,140,210,.12);color:#e8eefc;transform:none;box-shadow:none}
+.btn.ghost.small{padding:5px 12px;font-size:12px}
 
 input[type=text]{
   width:100%;padding:14px 16px;border-radius:12px;
@@ -64,7 +65,7 @@ input::placeholder{color:#4d6284}
 /* =========================================================
    2. 主菜单
    ========================================================= */
-#scr-menu{padding:22px;gap:18px;overflow-y:auto;align-items:center}
+#scr-menu{padding:22px;gap:16px;overflow-y:auto;align-items:center}
 #scr-menu > *{width:100%;max-width:720px}
 .topbar{
   display:flex;align-items:center;justify-content:space-between;
@@ -87,7 +88,7 @@ input::placeholder{color:#4d6284}
   border-radius:18px;border:1px solid rgba(96,140,210,.22);
   background:linear-gradient(135deg,rgba(30,44,70,.85),rgba(20,30,50,.85));
   color:#e8eefc;transition:.2s;overflow:hidden;
-  display:flex;flex-direction:column;gap:6px;min-height:160px;
+  display:flex;flex-direction:column;gap:6px;min-height:150px;
 }
 .mode-card:hover:not(.disabled){
   transform:translateY(-3px);
@@ -111,6 +112,72 @@ input::placeholder{color:#4d6284}
   background:rgba(255,215,80,.16);color:#ffd93d;
   border:1px solid rgba(255,215,80,.35);font-weight:700;
 }
+
+/* ---------- 食物密度设置 ---------- */
+.setting-card{padding:18px 22px}
+.setting-header{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-bottom:6px;
+}
+.setting-title{
+  font-size:15px;font-weight:700;color:#b9cdf0;margin:0;
+  display:flex;align-items:center;gap:6px;
+}
+.setting-desc{
+  font-size:12px;color:#7d94b8;margin-bottom:14px;line-height:1.5;
+}
+.setting-desc b{color:#5ee7a0}
+
+.setting-row{margin-bottom:14px}
+.setting-label{
+  display:flex;justify-content:space-between;align-items:baseline;
+  margin-bottom:6px;
+}
+.setting-name{font-size:13px;color:#9fb6d8}
+.setting-value{
+  font-size:18px;font-weight:800;color:#5ee7a0;
+  font-variant-numeric:tabular-nums;
+}
+
+/* 滑块 */
+.slider{
+  -webkit-appearance:none;appearance:none;
+  width:100%;height:6px;border-radius:3px;outline:none;
+  background:linear-gradient(to right,#3ecf8e,#2aa9e0);
+  cursor:pointer;
+}
+.slider::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;
+  width:20px;height:20px;border-radius:50%;
+  background:#fff;border:3px solid #3ecf8e;cursor:pointer;
+  box-shadow:0 2px 8px rgba(62,207,142,.5);
+  transition:.15s;
+}
+.slider::-webkit-slider-thumb:hover{
+  transform:scale(1.15);
+  box-shadow:0 2px 12px rgba(62,207,142,.8);
+}
+.slider::-moz-range-thumb{
+  width:20px;height:20px;border-radius:50%;
+  background:#fff;border:3px solid #3ecf8e;cursor:pointer;
+  box-shadow:0 2px 8px rgba(62,207,142,.5);
+}
+.slider::-moz-range-track{
+  height:6px;border-radius:3px;
+  background:linear-gradient(to right,#3ecf8e,#2aa9e0);
+}
+
+.setting-ticks{
+  display:flex;justify-content:space-between;
+  font-size:10px;color:#5f78a0;padding:0 4px;margin-top:4px;
+}
+
+.setting-summary{
+  text-align:center;font-size:13px;color:#9fb6d8;
+  padding:10px;border-radius:10px;margin-top:4px;
+  background:rgba(62,207,142,.08);border:1px solid rgba(62,207,142,.2);
+}
+.setting-summary b{color:#5ee7a0;font-weight:800;font-variant-numeric:tabular-nums}
 
 .hintbar{
   font-size:12px;color:#5f78a0;line-height:1.7;padding:0 4px;
@@ -140,6 +207,7 @@ input::placeholder{color:#4d6284}
   backdrop-filter:blur(8px);
 }
 .score b{color:#ffd93d;font-weight:700;font-variant-numeric:tabular-nums}
+.food-info b{color:#5ee7a0}
 
 .players-panel{
   position:absolute;right:18px;top:64px;width:176px;
