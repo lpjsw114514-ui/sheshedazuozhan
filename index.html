@@ -36,11 +36,12 @@
       <div class="mode-arrow">→</div>
     </button>
 
-    <button class="mode-card disabled" id="btnOnline">
+    <button class="mode-card" id="btnOnline">
       <div class="mode-icon">🌐</div>
       <div class="mode-title">在线对战</div>
       <div class="mode-desc">创建或加入房间，与好友同乐</div>
-      <div class="mode-badge">暂未支持</div>
+      <div class="mode-badge">P2P 直连</div>
+      <div class="mode-arrow">→</div>
     </button>
   </div>
 
@@ -96,6 +97,7 @@
       <span class="score">长度 <b id="hudLength">5</b></span>
       <span class="score">排名 <b id="hudRank">1</b>/<span id="hudTotal">6</span></span>
       <span class="score food-info">食物 <b id="hudFoodRange">1~7</b></span>
+      <span class="score online-info" id="hudOnline" hidden>🌐 <b id="hudOnlineCount">1</b> 人 · <span id="hudOnlineRole">房主</span></span>
     </div>
     <div class="hud-right">
       <button class="btn ghost" id="btnPause">暂停</button>
@@ -123,8 +125,51 @@
   </div>
 </div>
 
+<!-- ========== 2.5 联机大厅 ========== -->
+<div class="screen" id="scr-online">
+  <div class="online-wrap">
+    <div class="topbar">
+      <span class="me">🐍 <b id="onlineNick"></b></span>
+      <button class="btn ghost" id="btnOnlineBack">← 返回菜单</button>
+    </div>
+
+    <div class="card online-card">
+      <div class="tabs">
+        <button class="tab active" id="tabHost">我是房主</button>
+        <button class="tab" id="tabGuest">我是同学</button>
+      </div>
+
+      <!-- 房主 -->
+      <div class="pane" id="paneHost">
+        <div class="step">第 1 步 · 创建房间，把邀请码发给同学（QQ/微信即可）</div>
+        <button class="btn" id="btnCreateRoom">创建房间</button>
+        <textarea id="inviteCode" rows="4" readonly placeholder="邀请码将显示在这里"></textarea>
+        <button class="btn ghost" id="btnCopyInvite">📋 复制邀请码</button>
+        <div class="step">第 2 步 · 把同学的回传码粘贴进来</div>
+        <textarea id="answerIn" rows="4" placeholder="粘贴同学回传的「应答码」"></textarea>
+        <button class="btn" id="btnAcceptAnswer">✅ 确认该同学连接</button>
+        <div class="step">第 3 步 · 人齐了就进游戏</div>
+        <button class="btn" id="btnHostStart">🎮 进入游戏</button>
+        <p class="online-tip">每来一位新同学，需再点一次「创建房间」生成新邀请码。<br>房主刷新页面 = 房间解散；房主页面请保持前台打开。</p>
+      </div>
+
+      <!-- 同学 -->
+      <div class="pane" id="paneGuest" hidden>
+        <div class="step">第 1 步 · 粘贴房主发来的邀请码</div>
+        <textarea id="inviteIn" rows="4" placeholder="粘贴房主的「邀请码」"></textarea>
+        <button class="btn" id="btnJoinRoom">🔑 生成我的应答码</button>
+        <div class="step">第 2 步 · 把应答码发回给房主</div>
+        <textarea id="answerCode" rows="4" readonly placeholder="应答码将显示在这里"></textarea>
+        <button class="btn ghost" id="btnCopyAnswer">📋 复制应答码</button>
+        <p class="online-tip">发给房主后等他点「确认连接」，收到游戏画面即自动进房。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
+<script src="net.js"></script>
 <script src="game.js"></script>
 </body>
 </html>
