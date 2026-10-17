@@ -57,6 +57,8 @@ const S = {
   netPeers: new Map(),  // 房主：peerId -> 同学蛇对象
   peerMeta: new Map(),  // 房主：peerId -> { name, color }
   snapReceived: false,  // 同学：是否已收到第一个快照
+  aiCount: AI_COUNT,    // 联机房间 AI 蛇数量（房主可自定义，0 = 纯玩家对战）
+  hostAway: false,      // 同学：房主是否暂离
 };
 
 let foodId = 0;
@@ -115,6 +117,18 @@ function showScreen(name){
   document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
   const el = document.getElementById('scr-' + name);
   if (el) el.classList.add('active');
+  if (name === 'menu') refreshRoomBar();
+}
+
+/* ---------- 主菜单：房间状态条（退出游戏后连接仍保持） ---------- */
+function refreshRoomBar(){
+  const bar = document.getElementById('roomBar');
+  if (!S.online){ bar.hidden = true; return; }
+  bar.hidden = false;
+  const text = S.role === 'host'
+    ? `房间进行中 · 你是房主 · ${1 + S.netPeers.size} 名玩家`
+    : '房间进行中 · 你是同学 · 已连接房主';
+  document.getElementById('roomBarText').textContent = text;
 }
 function loadNick(){
   try { return localStorage.getItem(NICK_KEY) || ''; } catch(e){ return ''; }
@@ -325,7 +339,8 @@ function createGame(seed){
   };
   S.game.player.name = S.nick || '你';
   if (!(S.online && S.role === 'guest')){
-    for (let i = 0; i < AI_COUNT; i++){
+    const n = Math.max(0, Math.min(AI_COUNT, S.aiCount | 0));
+    for (let i = 0; i < n; i++){
       const a = makeSnake(false, COLORS[(i + 1) % COLORS.length]);
       a.name = 'AI';
       a.sid = 1000 + i;
@@ -889,13 +904,32 @@ function stopGame(){
 
 function backToMenu(){
   stopGame();
+  document.getElementById('awayOverlay').classList.remove('show');
+  if (S.online && S.role === 'host'){
+    // 房主暂离：P2P 连接保持，通知同学等待（房主随时可返回）
+    Net.broadcast({ t: 'hostAway', on: true });
+  }
   showScreen('menu');
+  refreshRoomBar();
 }
 
 function togglePause(){
   if (!S.game) return;
-  if (S.online){ toast('联机模式下无法暂停'); return; }
-  S.paused = !S.paused;
+  if (S.online){
+    if (S.role === 'guest'){
+      // 同学端：向房主发送暂停/恢复请求，由房主权威决定并广播给全员
+      Net.sendToHost({ t: 'pause' });
+      return;
+    }
+    setPaused(!S.paused);
+    Net.broadcast({ t: 'pause', on: S.paused });
+    return;
+  }
+  setPaused(!S.paused);
+}
+
+function setPaused(on){
+  S.paused = !!on;
   const ov = document.getElementById('pauseOverlay');
   if (S.paused) ov.classList.add('show');
   else ov.classList.remove('show');
@@ -1136,9 +1170,12 @@ function applySnap(msg){
 /* ---------- 同学：收到房主欢迎（种子同步） ---------- */
 function onWelcome(msg){
   foodId = 0;
+  if (typeof msg.ai === 'number') S.aiCount = msg.ai;
   createGame(msg.seed);            // 同一 seed → 与房主完全相同的食物图
   foodId = msg.foodId || 0;        // 对齐房主计数器，之后新食物 id 由快照驱动
   applyFoodDelta(null, msg.eaten); // 剔除房主已吃掉的初始食物
+  setPaused(false);                // 新对局以房主当前状态为准
+  applyHostAway(false);
   startGame();
   toast('已连接到房主');
 }
@@ -1146,16 +1183,45 @@ function onWelcome(msg){
 /* ---------- 房主：重新开始（同步新种子） ---------- */
 function hostRestart(){
   if (S.role !== 'host'){ toast('只有房主可以重新开始'); return; }
+  rebuildWorld();
+  // 复位暂停与暂离状态
+  setPaused(false);
+  Net.broadcast({ t: 'pause', on: false });
+  Net.broadcast({ t: 'hostAway', on: false });
+  toast('已重新开始，新种子已同步');
+}
+
+/* ---------- 房主：重建世界（新种子），保留已连接同学 ---------- */
+function rebuildWorld(){
   const metas = Array.from(S.peerMeta.entries());
-  createGame();
+  createGame();          // 新 seed + 按 S.aiCount 生成 AI
   S.netPeers.clear();
   for (const [id, meta] of metas){
     const rs = spawnRemoteSnake(id, meta.name, meta.color);
     S.netPeers.set(id, rs);
     S.game.remotes.push(rs);
-    Net.sendToPeer(id, { t: 'welcome', seed: S.seed, foodId: foodId, ai: AI_COUNT });
+    Net.sendToPeer(id, { t: 'welcome', seed: S.seed, foodId: foodId, ai: S.aiCount });
   }
-  toast('已重新开始，新种子已同步');
+}
+
+/* ---------- 房主：当前已被吃掉的初始食物 id 列表 ---------- */
+function currentEatenIds(){
+  const g = S.game;
+  if (!g || !g.initFoodCount || g.initFoodCount > 4000) return null;
+  const eaten = [];
+  for (let id = 1; id <= g.initFoodCount; id++){
+    if (!g.foodById.has(id)) eaten.push(id);
+  }
+  return eaten;
+}
+
+/* ---------- 房主：向指定同学重发欢迎包（用于掉线重进） ---------- */
+function resendWelcomeTo(peerId){
+  if (!S.game) return;
+  Net.sendToPeer(peerId, {
+    t: 'welcome', seed: S.seed, foodId: foodId, ai: S.aiCount,
+    eaten: currentEatenIds(),
+  });
 }
 
 /* ---------- 离开联机 ---------- */
@@ -1165,6 +1231,8 @@ function leaveOnline(){
   S.role = null;
   S.netPeers.clear();
   S.peerMeta.clear();
+  S.hostAway = false;
+  document.getElementById('awayOverlay').classList.remove('show');
   stopGame();
   showScreen('menu');
 }
@@ -1179,14 +1247,7 @@ Net.on.peerOpen = (peerId) => {
   S.netPeers.set(peerId, rs);
   S.game.remotes.push(rs);   // 必须登记：allSnakes() 靠它遍历，否则房主不推进同学蛇
   // 欢迎包：种子 + 食物计数器 + 已被吃掉的初始食物 id
-  let eaten = null;
-  if (S.game.initFoodCount && S.game.initFoodCount <= 4000){
-    eaten = [];
-    for (let id = 1; id <= S.game.initFoodCount; id++){
-      if (!S.game.foodById.has(id)) eaten.push(id);
-    }
-  }
-  Net.sendToPeer(peerId, { t: 'welcome', seed: S.seed, foodId: foodId, ai: AI_COUNT, eaten });
+  Net.sendToPeer(peerId, { t: 'welcome', seed: S.seed, foodId: foodId, ai: S.aiCount, eaten: currentEatenIds() });
   toast(`同学${peerId} 已接入房间`);
 };
 
@@ -1228,12 +1289,44 @@ Net.on.message = (peerId, msg) => {
         const dir = DIRS[msg.d];
         if (dir && !(dir.x === -rs.dir.x && dir.y === -rs.dir.y)) rs.nextDir = dir;
       }
+    } else if (msg.t === 'pause'){
+      // 同学请求暂停/恢复：房主权威切换并广播全员
+      if (S.game){
+        setPaused(!S.paused);
+        Net.broadcast({ t: 'pause', on: S.paused });
+        toast(S.paused ? `同学${peerId} 暂停了游戏` : `同学${peerId} 恢复了游戏`);
+      }
+    } else if (msg.t === 'rejoin'){
+      // 同学退出后重新请求进入：用当前世界状态重发欢迎包
+      if (S.game){
+        resendWelcomeTo(peerId);
+        toast(`同学${peerId} 返回了游戏`);
+      } else {
+        // 房主也暂离中：等房主自己返回，hostRestart 时会广播
+        Net.sendToPeer(peerId, { t: 'wait' });
+      }
     }
   } else if (S.role === 'guest'){
     if (msg.t === 'welcome') onWelcome(msg);
     else if (msg.t === 'snap') applySnap(msg);
+    else if (msg.t === 'pause') applyPause(msg.on);
+    else if (msg.t === 'hostAway') applyHostAway(msg.on);
+    else if (msg.t === 'wait') toast('房主也暂时离开了，等他返回游戏你会自动进房');
   }
 };
+
+/* ---------- 同学：应用暂停状态 ---------- */
+function applyPause(on){
+  setPaused(on);
+}
+
+/* ---------- 同学：房主暂离/返回 ---------- */
+function applyHostAway(on){
+  S.hostAway = !!on;
+  const ov = document.getElementById('awayOverlay');
+  if (S.hostAway) ov.classList.add('show');
+  else ov.classList.remove('show');
+}
 
 /* ---------- 联机大厅 UI ---------- */
 let hostWatchdog = null, guestWatchdog = null;
@@ -1254,9 +1347,15 @@ document.getElementById('tabGuest').addEventListener('click', () => switchOnline
 document.getElementById('btnOnlineBack').addEventListener('click', leaveOnline);
 
 document.getElementById('btnCreateRoom').addEventListener('click', async () => {
+  const firstTime = !S.online || S.role !== 'host';
   S.online = true;
   S.role = 'host';
-  if (!S.game) createGame();
+  const want = Math.max(0, Math.min(AI_COUNT, parseInt(document.getElementById('aiCount').value, 10) || 0));
+  // 首次建房、或修改了 AI 数量：重建世界（保留已连接同学并通知同步）
+  if (firstTime || !S.game || S.game.ai.length !== want){
+    S.aiCount = want;
+    rebuildWorld();
+  }
   const r = await Net.createInvite(document.getElementById('hostIp').value);
   document.getElementById('inviteCode').value = r.code;
   showCodeLen(document.getElementById('inviteLen'), r.code);
@@ -1308,6 +1407,22 @@ document.getElementById('btnJoinRoom').addEventListener('click', async () => {
   }, 15000);
 });
 document.getElementById('btnCopyAnswer').addEventListener('click', () => copyText(document.getElementById('answerCode')));
+
+/* ---------- 主菜单房间条：返回游戏 / 离开房间 ---------- */
+document.getElementById('btnBackToGame').addEventListener('click', () => {
+  if (!S.online) return;
+  if (S.role === 'host'){
+    // 房主返回：重建世界并同步新种子，全场重新开始
+    hostRestart();
+    startGame();
+    toast('已返回游戏，新对局开始');
+  } else {
+    // 同学返回：请求房主重发当前状态（房主暂离则等他返回后自动进房）
+    Net.sendToHost({ t: 'rejoin' });
+    toast('已请求返回，等待房主同步…');
+  }
+});
+document.getElementById('btnLeaveRoom').addEventListener('click', leaveOnline);
 
 addEventListener('beforeunload', () => { Net.closeAll(); });
 

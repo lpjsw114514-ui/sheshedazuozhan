@@ -45,6 +45,18 @@
     </button>
   </div>
 
+  <!-- 联机房间进行中：退出游戏后连接保持，可一键返回 -->
+  <div class="room-bar" id="roomBar" hidden>
+    <div class="room-info">
+      <span class="room-dot"></span>
+      <span id="roomBarText">房间进行中</span>
+    </div>
+    <div class="room-actions">
+      <button class="btn small" id="btnBackToGame">🎮 返回游戏</button>
+      <button class="btn ghost small" id="btnLeaveRoom">离开房间</button>
+    </div>
+  </div>
+
   <!-- 食物密度设置 -->
   <div class="card setting-card">
     <div class="setting-header">
@@ -115,6 +127,15 @@
     </div>
   </div>
 
+  <!-- 联机：房主暂离时同学端等待 -->
+  <div class="respawn-overlay" id="awayOverlay">
+    <div class="respawn-box">
+      <div class="dead-icon">⏳</div>
+      <div class="msg">房主暂时离开</div>
+      <div class="countdown" id="awayTip">连接保持中，等待房主返回…</div>
+    </div>
+  </div>
+
   <div class="pause-overlay" id="pauseOverlay">
     <div class="pause-box">
       <div class="pause-icon">⏸</div>
@@ -141,7 +162,18 @@
 
       <!-- 房主 -->
       <div class="pane" id="paneHost">
-        <div class="step">第 1 步 · 创建房间，把邀请码发给同学（QQ/微信即可）</div>
+        <div class="step">第 1 步 · 选择 AI 数量并创建房间，把邀请码发给同学</div>
+        <div class="ai-row">
+          <label class="pane-label" for="aiCount">AI 蛇数量</label>
+          <select id="aiCount">
+            <option value="5" selected>5 条（默认）</option>
+            <option value="4">4 条</option>
+            <option value="3">3 条</option>
+            <option value="2">2 条</option>
+            <option value="1">1 条</option>
+            <option value="0">0 条（纯玩家对战）</option>
+          </select>
+        </div>
         <button class="btn" id="btnCreateRoom">创建房间</button>
         <textarea id="inviteCode" rows="3" readonly placeholder="邀请码将显示在这里（已压缩，约 1KB）"></textarea>
         <div class="code-meta"><span id="inviteLen"></span><button class="btn ghost small" id="btnCopyInvite">📋 复制邀请码</button></div>
