@@ -13,6 +13,8 @@ const COLORS = ['#5ee7a0','#5bc8ff','#a78bfa','#ffd93d','#ff7b7b','#ff9f5b','#4d
 const START_LEN = 5;
 const AI_COUNT = 5;
 const RESPAWN_MS = 3000;
+/* 长度达到该值后获得"钢筋蛇身"：撞到自己不会死（撞别人/边界照死） */
+const SELF_IMMUNE_LEN = 50;
 const NICK_KEY = 'snake_arena_nick';
 const FOOD_SETTING_KEY = 'snake_arena_food_setting';
 
@@ -59,6 +61,7 @@ const S = {
   snapReceived: false,  // 同学：是否已收到第一个快照
   aiCount: AI_COUNT,    // 联机房间 AI 蛇数量（房主可自定义，0 = 纯玩家对战）
   hostAway: false,      // 同学：房主是否暂离
+  immuneNotified: false, // 是否已提示过"钢筋蛇身"
 };
 
 let foodId = 0;
@@ -467,8 +470,12 @@ function tick(){
 
     if (!inBounds(nh.x, nh.y)){ dead.add(s); continue; }
 
-    for (let i = 1; i < s.snake.length; i++){
-      if (s.snake[i].x === nh.x && s.snake[i].y === nh.y){ dead.add(s); break; }
+    /* 长度达到 SELF_IMMUNE_LEN 后获得"钢筋蛇身"：撞到自己不会死。
+       判定在房主端权威执行，同学端通过快照自动一致。 */
+    if (s.snake.length < SELF_IMMUNE_LEN){
+      for (let i = 1; i < s.snake.length; i++){
+        if (s.snake[i].x === nh.x && s.snake[i].y === nh.y){ dead.add(s); break; }
+      }
     }
 
     for (const o of allSnakes()){
@@ -598,9 +605,11 @@ function drawSnake(s, t){
     const pad = 1.5;
 
     if (i === 0 && s.isPlayer){
-      ctx.shadowColor = s.color; ctx.shadowBlur = 18;
+      ctx.shadowColor = n >= SELF_IMMUNE_LEN ? '#ffd93d' : s.color;
+      ctx.shadowBlur = 18;
     } else if (i === 0){
-      ctx.shadowColor = s.color; ctx.shadowBlur = 8;
+      ctx.shadowColor = n >= SELF_IMMUNE_LEN ? '#ffd93d' : s.color;
+      ctx.shadowBlur = 8;
     } else {
       ctx.shadowBlur = 0;
     }
@@ -781,7 +790,16 @@ function updateUI(){
   if (!S.game) return;
   const p = S.game.player;
   document.getElementById('hudScore').textContent = p.score;
-  document.getElementById('hudLength').textContent = p.alive ? p.snake.length : 0;
+  const lenEl = document.getElementById('hudLength');
+  lenEl.textContent = p.alive ? p.snake.length : 0;
+  // 钢筋蛇身状态：HUD 长度变金 + 首次达成提示一次
+  const immune = p.alive && p.snake.length >= SELF_IMMUNE_LEN;
+  lenEl.classList.toggle('immune', immune);
+  if (immune && !S.immuneNotified){
+    S.immuneNotified = true;
+    toast('🛡 身长达到 ' + SELF_IMMUNE_LEN + '，获得钢筋蛇身：撞到自己不会死了！');
+  }
+  if (!immune) S.immuneNotified = false;
 
   const alive = allSnakes().filter(s => s.alive);
   const sorted = [...alive].sort((a, b) => b.score - a.score || b.snake.length - a.snake.length);
@@ -1056,7 +1074,6 @@ function hostBroadcast(){
   if (!g) return;
   const ev = { add: g.foodEv.add, del: g.foodEv.del };
   S.netPeers.forEach((rs, id) => {
-    const head = (rs.alive && rs.snake.length) ? rs.snake[0] : null;
     // 同学自己的蛇：完整身体 + 朝向 + 状态
     const me = {
       body: packBody(rs),
@@ -1065,7 +1082,9 @@ function hostBroadcast(){
       score: rs.score,
       respawnIn: rs.alive ? 0 : Math.max(0, Math.round(rs.respawnAt - performance.now())),
     };
-    // 其他蛇：只发附近（AOI）的完整身体，远处的只发蛇头（供小地图）
+    // 其他蛇：全部发送完整身体（不再按距离过滤）。
+    // 蛇身数据量很小（最长几十段 ×2 字节），DataChannel 完全扛得住；
+    // 早期版本只在 55 格内发身体，同学看不到远处的蛇，小地图也点不亮。
     const others = [];
     for (const s of allSnakes()){
       if (s === rs) continue;
@@ -1073,9 +1092,7 @@ function hostBroadcast(){
       if (s.alive && s.snake.length){
         const h = s.snake[0];
         o.hx = h.x; o.hy = h.y; o.dir = s.dir;
-        if (head && Math.abs(h.x - head.x) < 55 && Math.abs(h.y - head.y) < 55){
-          o.body = packBody(s);
-        }
+        o.body = packBody(s);
       }
       others.push(o);
     }

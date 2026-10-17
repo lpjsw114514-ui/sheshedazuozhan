@@ -3,7 +3,7 @@
    零服务器 P2P 联机层（WebRTC DataChannel + 手动信令）
    ---------------------------------------------------------
    - 不依赖任何服务器，不做内网穿透
-   - 信令码经 deflate 压缩：3~6KB → 约 1~1.5KB
+   - 信令码经 deflate 压缩 + SDP 行级精简
    - 码格式：S1.<校验>.<base64(deflate(JSON))>
             不支持压缩的浏览器降级为 S0.<校验>.<base64(JSON)>
    - 码内置 FNV 校验，复制截断会明确提示，不再莫名"连接失败"
@@ -138,6 +138,27 @@ const Net = (function () {
     return /\.local/.test(sdp || '');
   }
 
+  /* ================= SDP 行级精简 ================= */
+  /* 只删除"删了也一定能连"的可选行 + 缩短 o 行 session-id + 去掉 candidate
+     的冗余后缀。刻意不做结构重构（不模板化重建 SDP），保证连接稳定性优先。 */
+  function slimSdp(sdp) {
+    const nl = sdp.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
+    return sdp.split(/\r?\n/).filter(line => {
+      if (!line) return false;
+      // extmap/msid 仅与音视频轨道有关；ice-options/max-message-size 对
+      // 非 trickle 的完整 SDP 交换无影响（消息上限默认 64KB，快照仅数 KB）
+      if (/^a=(extmap-allow-mixed|msid-semantic|ice-options|max-message-size)/.test(line)) return false;
+      return true;
+    }).map(line => {
+      // o=- <15位随机session-id> 2 IN IP4 0.0.0.0 → o=- 0 2 IN IP4 0.0.0.0
+      line = line.replace(/^o=- \d+ (\d+ IN IP4 )/, 'o=- 0 $1');
+      // candidate: ... typ host generation 0 network-id 1 network-cost 10
+      // → candidate: ... typ host（后缀纯附加信息）
+      line = line.replace(/^(a=candidate:\S+ \S+ \S+ \d+ \S+ \d+ typ \S+)( generation .*)$/, '$1');
+      return line;
+    }).join(nl);
+  }
+
   /* ================= WebRTC 基础 ================= */
   function newPC() { return new RTCPeerConnection(CFG); }
 
@@ -182,7 +203,7 @@ const Net = (function () {
     const rawSdp = pc.localDescription.sdp;
     const code = await enc({
       v: 2, role: 'offer', id,
-      sdp: { type: 'offer', sdp: injectIp(rawSdp, myIp) },
+      sdp: { type: 'offer', sdp: slimSdp(injectIp(rawSdp, myIp)) },
     });
     return { code, mdns: hasMdnsCandidate(rawSdp) };
   }
@@ -236,7 +257,7 @@ const Net = (function () {
     const rawSdp = pc.localDescription.sdp;
     const code = await enc({
       v: 2, role: 'answer', id: invite.id,
-      sdp: { type: 'answer', sdp: injectIp(rawSdp, myIp) },
+      sdp: { type: 'answer', sdp: slimSdp(injectIp(rawSdp, myIp)) },
     });
     return { ok: true, code, mdns: hasMdnsCandidate(rawSdp) };
   }
@@ -277,6 +298,6 @@ const Net = (function () {
     createInvite, acceptAnswer, joinWithCode,
     sendToPeer, broadcast, sendToHost, closeAll,
     isPeerOpen, hostReady,
-    _debug: { enc, dec, injectIp, hasMdnsCandidate }, // 供测试/调试
+    _debug: { enc, dec, injectIp, slimSdp, hasMdnsCandidate }, // 供测试/调试
   };
 })();

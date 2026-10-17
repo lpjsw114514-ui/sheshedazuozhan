@@ -207,6 +207,7 @@ input::placeholder{color:#4d6284}
   backdrop-filter:blur(8px);
 }
 .score b{color:#ffd93d;font-weight:700;font-variant-numeric:tabular-nums}
+.score b.immune{color:#ffe97a;text-shadow:0 0 10px rgba(255,217,61,.85)}
 .food-info b{color:#5ee7a0}
 
 .players-panel{
