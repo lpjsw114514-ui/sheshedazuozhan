@@ -22,6 +22,16 @@ const WIN_LEN_MAX = 5000;
 const NICK_KEY = 'snake_arena_nick';
 const FOOD_SETTING_KEY = 'snake_arena_food_setting';
 const WIN_LEN_KEY = 'snake_arena_win_len';
+const MAP_KEY = 'snake_arena_map';
+
+/* ---------------- 自定义地图 ----------------
+   世界按 8×8 格为一块（200×200 = 40000 块），墙体按块放置：
+   - 碰撞/生成/出生避让都按块判定，O(1) 查询
+   - 联机时房主的地图随欢迎包同步（块索引数组） */
+const MAP_BLOCK = 8;
+const MAP_COLS = W / MAP_BLOCK;   // 200
+const MAP_ROWS = H / MAP_BLOCK;   // 200
+const MAP_MAX_BLOCKS = 30000;     // 上限：控制欢迎包体积（DataChannel 64KB 限制）
 
 /* 食物密度默认值：每 5×5 区域 1~7 个 */
 const FOOD_GRID = 5;
@@ -73,6 +83,11 @@ const S = {
   enteredGame: false,   // 联机中是否已进入过游戏（控制主菜单房间条按钮语义）
   rejoining: false,     // 成员：是否正在请求重进（收到欢迎包时立即进房）
   pendingWelcome: false,// 成员：主菜单上有待处理的欢迎包（点了返回游戏才进）
+  serverMode: false,    // 本地服务器模式（房主电脑运行 1.exe，消息经其中转）
+  /* 自定义地图：blockGrid 供 O(1) 碰撞查询，blockList 供渲染/同步/编辑器 */
+  mapGrid: new Uint8Array(MAP_COLS * MAP_ROWS),
+  mapList: [],          // 已放置的块索引（有序）
+  mapName: '默认（无墙体）',
 };
 
 let foodId = 0;
@@ -119,6 +134,8 @@ function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
 function inBounds(x, y){ return x >= 0 && x < W && y >= 0 && y < H; }
 
 let toastTimer = null;
+/* 本地服务器模式：从成员链接打开时，进菜单后自动加入房间 */
+let pendingAutoJoin = null;
 function toast(msg){
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -158,21 +175,22 @@ function refreshRoomBar(){
 
   // 状态感知：没进入过游戏时不显示"返回游戏"，避免误导
   const btn = document.getElementById('btnBackToGame');
+  const srv = S.serverMode ? ' · 服务器模式' : '';
   let text;
   if (S.role === 'host'){
     if (S.enteredGame){
-      text = `房间进行中 · 你是房主 · ${1 + S.netPeers.size} 名玩家`;
+      text = `房间进行中 · 你是房主 · ${1 + S.netPeers.size} 名玩家${srv}`;
       btn.textContent = '🎮 返回游戏';
     } else {
-      text = '房间已创建 · 把邀请码发给成员';
+      text = '房间已创建 · 把邀请码发给成员' + srv;
       btn.textContent = '🎮 进入游戏';
     }
   } else {
     if (S.enteredGame){
-      text = '房间进行中 · 你是成员 · 已连接房主';
+      text = '房间进行中 · 你是成员 · 已连接房主' + srv;
       btn.textContent = '🎮 返回游戏';
     } else {
-      text = '已连接房主 · 等待进入游戏';
+      text = '已连接房主 · 等待进入游戏' + srv;
       btn.textContent = '← 回到大厅';
     }
   }
@@ -220,6 +238,100 @@ function loadWinLen(){
 }
 function saveWinLen(){
   try { localStorage.setItem(WIN_LEN_KEY, String(S.winLen)); } catch(e){}
+}
+
+/* =========================================================
+   自定义地图：墙体数据 / 编解码 / 持久化
+   ========================================================= */
+function isWall(x, y){
+  if (x < 0 || x >= W || y < 0 || y >= H) return false; // 越界由边界判定负责
+  return S.mapGrid[(y >> 3) * MAP_COLS + (x >> 3)] === 1;
+}
+function isWallBlock(bx, by){
+  if (bx < 0 || bx >= MAP_COLS || by < 0 || by >= MAP_ROWS) return false;
+  return S.mapGrid[by * MAP_COLS + bx] === 1;
+}
+/* 用块索引列表重建 mapGrid + mapList（联机同步/读取存档都用它） */
+function applyMapList(indices){
+  S.mapGrid.fill(0);
+  S.mapList = [];
+  for (const idx of indices || []){
+    if (!Number.isInteger(idx) || idx < 0 || idx >= MAP_COLS * MAP_ROWS) continue;
+    if (S.mapGrid[idx]) continue;
+    S.mapGrid[idx] = 1;
+    S.mapList.push(idx);
+  }
+  S.mapList.sort((a, b) => a - b);
+  S.mapName = S.mapList.length
+    ? '自定义地图（' + S.mapList.length + ' 块）'
+    : '默认（无墙体）';
+  refreshMapUI();
+  rebuildMinimapWalls();
+}
+
+/* ---- 地图码（分享用）：M1.<base64(JSON 索引数组)> ---- */
+function b64decodeLocal(str){
+  const bin = atob(str);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+async function encodeMapCode(indices){
+  const raw = new TextEncoder().encode(JSON.stringify(indices));
+  let bin = '';
+  for (const b of raw) bin += String.fromCharCode(b);
+  const payload = btoa(bin);
+  return 'M1.' + payload;
+}
+async function decodeMapCode(code){
+  code = String(code || '').trim();
+  if (!code) throw new Error('地图码为空');
+  const m = code.match(/^M1\.([A-Za-z0-9+/=]+)$/);
+  if (!m) throw new Error('地图码格式不正确（应以 M1. 开头）');
+  let bytes;
+  try { bytes = b64decodeLocal(m[1]); } catch (e) { throw new Error('地图码已损坏，请重新复制'); }
+  let arr;
+  try { arr = JSON.parse(new TextDecoder().decode(bytes)); }
+  catch (e) { throw new Error('地图码内容解析失败'); }
+  if (!Array.isArray(arr)) throw new Error('地图码内容无效');
+  if (arr.length > MAP_MAX_BLOCKS) throw new Error('地图码包含 ' + arr.length + ' 块，超过上限 ' + MAP_MAX_BLOCKS);
+  return arr;
+}
+
+/* ---- 本地存档：原始索引 JSON（同步读取，启动时零延迟） ---- */
+function saveMapSetting(){
+  try { localStorage.setItem(MAP_KEY, JSON.stringify(S.mapList)); } catch(e){}
+}
+function loadMapSetting(){
+  try {
+    const raw = localStorage.getItem(MAP_KEY);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) applyMapList(arr.slice(0, MAP_MAX_BLOCKS));
+  } catch(e){}
+}
+function refreshMapUI(){
+  const nameEl = document.getElementById('mapName');
+  if (nameEl) nameEl.textContent = S.mapName;
+  const cnt = document.getElementById('mapBlockCount');
+  if (cnt) cnt.textContent = S.mapList.length + ' 块';
+}
+
+/* ---- 小地图墙体缓存：地图变化时预渲染，帧内只贴图 ---- */
+let minimapWallCache = null;
+function rebuildMinimapWalls(){
+  minimapWallCache = null;
+  if (!S.mapList.length) return;
+  const c = document.createElement('canvas');
+  c.width = 160; c.height = 160;
+  const cx = c.getContext('2d');
+  const k = 160 / Math.max(W, H) * MAP_BLOCK; // 每块像素
+  cx.fillStyle = 'rgba(120,150,210,.45)';
+  for (const idx of S.mapList){
+    const bx = idx % MAP_COLS, by = (idx / MAP_COLS) | 0;
+    cx.fillRect(bx * k, by * k, Math.ceil(k), Math.ceil(k));
+  }
+  minimapWallCache = c;
 }
 
 /* =========================================================
@@ -298,12 +410,30 @@ function findSpawn(){
       let dy = Math.abs(h.y - y); dy = Math.min(dy, H - dy);
       if (dx < 15 && dy < 15){ ok = false; break; }
     }
+    // 避开墙体：检查出生点周边 24×24 格覆盖的 9 个块
+    if (ok){
+      for (let dy = -8; dy <= 8; dy += 8){
+        for (let dx = -8; dx <= 8; dx += 8){
+          if (isWallBlock((x + dx) >> 3, (y + dy) >> 3)){ ok = false; break; }
+        }
+        if (!ok) break;
+      }
+    }
     if (ok) return { x, y };
   }
-  return {
-    x: 20 + Math.floor(rng() * (W - 40)),
-    y: 20 + Math.floor(rng() * (H - 40)),
-  };
+  // 兜底：全场扫描第一块无墙区域（保证有墙地图也一定能出生）
+  for (let by = 2; by < MAP_ROWS - 2 && !ok; by += 3){
+    for (let bx = 2; bx < MAP_COLS - 2; bx += 3){
+      let free = true;
+      for (let dy = -8; dy <= 8 && free; dy += 8){
+        for (let dx = -8; dx <= 8; dx += 8){
+          if (isWallBlock(bx + (dx >> 3), by + (dy >> 3))){ free = false; break; }
+        }
+      }
+      if (free) return { x: bx * MAP_BLOCK + 4, y: by * MAP_BLOCK + 4 };
+    }
+  }
+  return { x: W >> 1, y: H >> 1 };
 }
 
 function respawnSnake(s){
@@ -356,6 +486,7 @@ function generateAllFood(){
           const x = cx * FOOD_GRID + Math.floor(rng() * FOOD_GRID);
           const y = cy * FOOD_GRID + Math.floor(rng() * FOOD_GRID);
           if (x >= W || y >= H) continue;
+          if (isWall(x, y)) continue;      // 墙里不放食物
           const key = x + ',' + y;
           if (S.game.foods.has(key)) continue;
           if (occupied.has(key)) continue;   // 蛇身上不放食物
@@ -390,6 +521,7 @@ function respawnFoodNear(cx, cy){
   for (let attempt = 0; attempt < 20; attempt++){
     const x = clamp(cx + Math.floor(Math.random() * 11) - 5, 0, W - 1);
     const y = clamp(cy + Math.floor(Math.random() * 11) - 5, 0, H - 1);
+    if (isWall(x, y)) continue;         // 墙里不放食物
     const key = x + ',' + y;
     if (S.game.foods.has(key)) continue;
     if (isOnSnake(x, y)) continue;   // 不在蛇身上重生
@@ -492,6 +624,10 @@ function aiChooseDir(ai){
       scored.push({ d, score: -9999 });
       continue;
     }
+    if (isWall(nx, ny)){
+      scored.push({ d, score: -9999 });   // 墙=死路，AI 不往墙里钻
+      continue;
+    }
 
     let collision = false;
     for (const s of allSnakes()){
@@ -555,6 +691,7 @@ function tick(){
     const nh = newHeads.get(s);
 
     if (!inBounds(nh.x, nh.y)){ dead.add(s); continue; }
+    if (isWall(nh.x, nh.y)){ dead.add(s); continue; }   // 撞墙即死
 
     /* 长度达到 SELF_IMMUNE_LEN 后获得"钢筋蛇身"：撞到自己不会死。
        判定在房主端权威执行，成员端通过快照自动一致。 */
@@ -832,6 +969,38 @@ function draw(now){
   ctx.lineWidth = 4;
   ctx.strokeRect(0, 0, W * CELL, H * CELL);
 
+  /* 墙体（自定义地图）：按块绘制，仅绘制可视范围内的块 */
+  if (S.mapList.length){
+    const bs = MAP_BLOCK * CELL;
+    ctx.fillStyle = '#18233f';
+    const b0x = Math.max(0, x0 >> 3), b1x = Math.min(MAP_COLS - 1, x1 >> 3);
+    const b0y = Math.max(0, y0 >> 3), b1y = Math.min(MAP_ROWS - 1, y1 >> 3);
+    for (let by = b0y; by <= b1y; by++){
+      const row = by * MAP_COLS;
+      for (let bx = b0x; bx <= b1x; bx++){
+        if (S.mapGrid[row + bx]){
+          ctx.fillRect(bx * bs, by * bs, bs, bs);
+        }
+      }
+    }
+    ctx.strokeStyle = 'rgba(96,140,210,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let by = b0y; by <= b1y; by++){
+      const row = by * MAP_COLS;
+      for (let bx = b0x; bx <= b1x; bx++){
+        if (!S.mapGrid[row + bx]) continue;
+        // 只描边朝向空块的边，减少描边数量
+        const x = bx * bs, y = by * bs;
+        if (!isWallBlock(bx, by - 1)){ ctx.moveTo(x, y + .5); ctx.lineTo(x + bs, y + .5); }
+        if (!isWallBlock(bx, by + 1)){ ctx.moveTo(x, y + bs - .5); ctx.lineTo(x + bs, y + bs - .5); }
+        if (!isWallBlock(bx - 1, by)){ ctx.moveTo(x + .5, y); ctx.lineTo(x + .5, y + bs); }
+        if (!isWallBlock(bx + 1, by)){ ctx.moveTo(x + bs - .5, y); ctx.lineTo(x + bs - .5, y + bs); }
+      }
+    }
+    ctx.stroke();
+  }
+
   ctx.font = Math.round(CELL * 0.86) + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -879,6 +1048,9 @@ function drawMinimap(){
 
   if (!S.game) return;
   const k = size / Math.max(W, H);
+
+  // 墙体（预渲染缓存，帧内只贴图）
+  if (minimapWallCache) ctx.drawImage(minimapWallCache, mx, my);
 
   ctx.strokeStyle = 'rgba(255,255,255,0.28)';
   ctx.lineWidth = 1;
@@ -967,7 +1139,7 @@ function updateUI(){
     document.getElementById('hudOnlineCount').textContent = S.role === 'host'
       ? allSnakes().length
       : 1 + S.game.ai.length;
-    document.getElementById('hudOnlineRole').textContent = S.role === 'host' ? '房主' : '成员';
+    document.getElementById('hudOnlineRole').textContent = (S.role === 'host' ? '房主' : '成员') + (S.serverMode ? '·服务器' : '');
     document.getElementById('hudRoomNo').textContent = S.roomNo ? ' · 房号 ' + S.roomNo : '';
   } else {
     hudOnline.hidden = true;
@@ -1196,6 +1368,13 @@ document.getElementById('btnEnter').addEventListener('click', () => {
   saveNick(S.nick);
   document.getElementById('menuNick').textContent = S.nick;
   showScreen('menu');
+  // 从房主发的成员链接打开：名字取好后自动加入服务器房间
+  if (pendingAutoJoin && !S.online){
+    const room = pendingAutoJoin;
+    pendingAutoJoin = null;
+    document.getElementById('roomIn').value = room;
+    document.getElementById('btnServerJoin').click();
+  }
 });
 document.getElementById('nickInput').addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('btnEnter').click();
@@ -1388,6 +1567,8 @@ function onWelcome(msg){
   if (typeof msg.ai === 'number') S.aiCount = msg.ai;
   if (typeof msg.winLen === 'number' && msg.winLen >= WIN_LEN_MIN) S.winLen = clamp(Math.round(msg.winLen), WIN_LEN_MIN, WIN_LEN_MAX);
   if (typeof msg.room === 'string') S.roomNo = msg.room;
+  // 房主的地图必须先应用：createGame 里的出生避让/食物生成都依赖墙体
+  if (Array.isArray(msg.map)) applyMapList(msg.map);
   createGame(msg.seed);            // 同一 seed → 与房主完全相同的食物图
   foodId = msg.foodId || 0;        // 对齐房主计数器，之后新食物 id 由快照驱动
   applyFoodDelta(null, msg.eaten); // 剔除房主已吃掉的初始食物
@@ -1436,7 +1617,7 @@ function rebuildWorld(){
     S.game.remotes.push(rs);
     Net.sendToPeer(id, {
       t: 'welcome', seed: S.seed, foodId: foodId, ai: S.aiCount,
-      winLen: S.winLen, room: S.roomNo,
+      winLen: S.winLen, room: S.roomNo, map: S.mapList,
       win: S.winner ? { name: S.winner.name, len: S.winner.len, color: S.winner.color } : null,
     });
   }
@@ -1458,7 +1639,7 @@ function resendWelcomeTo(peerId){
   if (!S.game) return;
   Net.sendToPeer(peerId, {
     t: 'welcome', seed: S.seed, foodId: foodId, ai: S.aiCount,
-    winLen: S.winLen, room: S.roomNo,
+    winLen: S.winLen, room: S.roomNo, map: S.mapList,
     eaten: currentEatenIds(),
     win: S.winner ? { name: S.winner.name, len: S.winner.len, color: S.winner.color } : null,
   });
@@ -1469,6 +1650,7 @@ function leaveOnline(){
   Net.closeAll();
   S.online = false;
   S.role = null;
+  S.serverMode = false;
   S.netPeers.clear();
   S.peerMeta.clear();
   S.hostAway = false;
@@ -1492,10 +1674,11 @@ Net.on.peerOpen = (peerId) => {
   const rs = spawnRemoteSnake(peerId, name, color);
   S.netPeers.set(peerId, rs);
   S.game.remotes.push(rs);   // 必须登记：allSnakes() 靠它遍历，否则房主不推进成员蛇
-  // 欢迎包：种子 + 食物计数器 + 已被吃掉的初始食物 id + 胜利长度 + 房间号
+  // 欢迎包：种子 + 食物计数器 + 已被吃掉的初始食物 id + 胜利长度 + 房间号 + 地图
   Net.sendToPeer(peerId, {
     t: 'welcome', seed: S.seed, foodId: foodId, ai: S.aiCount,
-    winLen: S.winLen, room: S.roomNo, eaten: currentEatenIds(),
+    winLen: S.winLen, room: S.roomNo, map: S.mapList,
+    eaten: currentEatenIds(),
     win: S.winner ? { name: S.winner.name, len: S.winner.len, color: S.winner.color } : null,
   });
   toast(`成员${peerId} 已接入房间`);
@@ -1522,6 +1705,30 @@ Net.on.hostClose = () => {
   if (S.role !== 'guest') return;
   toast('房主已离开，连接断开');
   leaveOnline();
+};
+
+/* 服务器模式：房主页面关闭（宽限）或返回 */
+Net.on.hostAway = (on) => {
+  if (S.role !== 'guest') return;
+  applyHostAway(on);
+  if (on) toast('房主页面已关闭，连接保持中，等待房主返回…');
+};
+
+/* 服务器模式：ws 断开（房主超时未返回 / 网络中断） */
+Net.on.serverClose = () => {
+  if (!S.online || !S.serverMode) return;
+  if (S.role === 'guest'){
+    toast('与服务器的连接已断开');
+    leaveOnline();
+  } else if (S.role === 'host'){
+    toast('与服务器的连接已断开，房间已关闭');
+    leaveOnline();
+  }
+};
+
+/* 服务器模式：服务器返回的错误（房间不存在/已有房主等） */
+Net.on.serverError = (err) => {
+  toast(err);
 };
 
 Net.on.message = (peerId, msg) => {
@@ -1676,6 +1883,85 @@ document.getElementById('btnJoinRoom').addEventListener('click', async () => {
 });
 document.getElementById('btnCopyAnswer').addEventListener('click', () => copyText(document.getElementById('answerCode')));
 
+/* =========================================================
+   本地服务器模式（房主电脑运行 1.exe）
+   ---------------------------------------------------------
+   房主：运行 1.exe → 打开控制台打印的网址 → 点「创建服务器房间」
+         → 把成员链接（http://IP:端口/?room=NNNNNN）发到群里
+   成员：点开链接即入房（自动带房间号），无需复制任何码
+   ========================================================= */
+/* 房主：创建服务器房间 */
+document.getElementById('btnServerCreate').addEventListener('click', async () => {
+  if (!Net.serverSupported()){
+    toast('当前是 HTTPS 页面，浏览器禁止连接局域网服务器。请从房主电脑运行 1.exe 后，用控制台打印的 http://IP:端口 网址打开');
+    return;
+  }
+  // 房间号：输入框 > 服务器注入 > 随机
+  const noInput = document.getElementById('roomNo');
+  let no = String(noInput.value || '').replace(/\D/g, '').slice(0, 6);
+  if (no && no.length !== 6){ toast('房间号需为 6 位数字（或留空自动生成）'); return; }
+  if (!no) no = (window.LAN_SERVER && window.LAN_SERVER.room) || String(Math.floor(Math.random() * 900000) + 100000);
+  noInput.value = no;
+  S.roomNo = no;
+
+  const addr = document.getElementById('serverHost').value;
+  S.online = true; S.role = 'host'; S.serverMode = true;
+  try {
+    await Net.connectServer(addr);
+  } catch (e) {
+    S.online = false; S.role = null; S.serverMode = false;
+    toast(e.message);
+    return;
+  }
+  // 按当前选择初始化世界（房主权威，房主的地图/胜利长度/食物密度）
+  const want = Math.max(0, Math.min(AI_COUNT, parseInt(document.getElementById('aiCount').value, 10) || 0));
+  S.aiCount = want;
+  if (!S.game) createGame();
+  Net.createServerRoom(no);
+});
+
+/* 服务器模式：房主房间就绪 → 生成成员链接 */
+Net.on.serverHostOpen = (room) => {
+  if (room) S.roomNo = room;
+  let hostPart = location.host;
+  const lan = window.LAN_SERVER;
+  if (lan && Array.isArray(lan.ips) && lan.ips.length){
+    hostPart = lan.ips[0] + ':' + (lan.port || 9600);
+  }
+  const url = 'http://' + hostPart + '/?room=' + S.roomNo;
+  document.getElementById('serverShareUrl').value = url;
+  document.getElementById('serverShare').hidden = false;
+  toast('服务器房间 ' + S.roomNo + ' 已就绪，把成员链接发到群里');
+  refreshRoomBar();
+};
+document.getElementById('btnCopyShareUrl').addEventListener('click', () => copyText(document.getElementById('serverShareUrl')));
+
+/* 成员：加入服务器房间 */
+document.getElementById('btnServerJoin').addEventListener('click', async () => {
+  if (!Net.serverSupported()){
+    toast('当前是 HTTPS 页面，浏览器禁止连接局域网服务器。请点开房主发的成员链接（http://IP:端口/?room=NNNNNN）');
+    return;
+  }
+  const room = String(document.getElementById('roomIn').value || '').replace(/\D/g, '');
+  if (room.length !== 6){ toast('请输入 6 位房间号'); return; }
+  const addr = document.getElementById('serverHostG').value;
+  S.online = true; S.role = 'guest'; S.serverMode = true; S.roomNo = room;
+  try {
+    await Net.connectServer(addr);
+  } catch (e) {
+    S.online = false; S.role = null; S.serverMode = false;
+    toast(e.message);
+    return;
+  }
+  Net.joinServerRoom(room);
+  clearTimeout(guestWatchdog);
+  guestWatchdog = setTimeout(() => {
+    if (S.online && S.role === 'guest' && !S.enteredGame){
+      toast('等待超时：请确认房主已打开游戏页面、房间号是否正确');
+    }
+  }, 15000);
+});
+
 /* ---------- 主菜单房间条：返回游戏 / 离开房间 ---------- */
 document.getElementById('btnBackToGame').addEventListener('click', () => {
   if (!S.online) return;
@@ -1708,6 +1994,225 @@ document.getElementById('btnLeaveRoom').addEventListener('click', leaveOnline);
 addEventListener('beforeunload', () => { Net.closeAll(); });
 
 /* =========================================================
+   地图编辑器（自定义地图）
+   ---------------------------------------------------------
+   200×200 块（每块 8×8 格）；画笔/橡皮/矩形 + 5 种预设；
+   保存写入 localStorage 并立即生效；联机时随房主欢迎包同步。
+   ========================================================= */
+const mapCanvas = document.getElementById('mapCanvas');
+const mctx = mapCanvas.getContext('2d');
+const MAP_CV = 400; // 内部分辨率：200 块 × 2px
+const ed = { tool: 'brush', painting: false, rectStart: null, rectCur: null, grid: null };
+
+function edCount(){
+  let n = 0;
+  for (let i = 0; i < ed.grid.length; i++) if (ed.grid[i]) n++;
+  return n;
+}
+function edDraw(){
+  mctx.fillStyle = '#0a0f1e';
+  mctx.fillRect(0, 0, MAP_CV, MAP_CV);
+  mctx.strokeStyle = 'rgba(90,130,200,0.12)';
+  mctx.lineWidth = 1;
+  mctx.beginPath();
+  for (let i = 0; i <= 200; i += 10){
+    mctx.moveTo(i * 2 + .5, 0); mctx.lineTo(i * 2 + .5, MAP_CV);
+    mctx.moveTo(0, i * 2 + .5); mctx.lineTo(MAP_CV, i * 2 + .5);
+  }
+  mctx.stroke();
+  mctx.fillStyle = '#3ecf8e';
+  for (let idx = 0; idx < ed.grid.length; idx++){
+    if (!ed.grid[idx]) continue;
+    const bx = idx % MAP_COLS, by = (idx / MAP_COLS) | 0;
+    mctx.fillRect(bx * 2, by * 2, 2, 2);
+  }
+  if (ed.rectStart && ed.rectCur){
+    const x0 = Math.min(ed.rectStart.x, ed.rectCur.x) * 2;
+    const y0 = Math.min(ed.rectStart.y, ed.rectCur.y) * 2;
+    const w = (Math.abs(ed.rectCur.x - ed.rectStart.x) + 1) * 2;
+    const h = (Math.abs(ed.rectCur.y - ed.rectStart.y) + 1) * 2;
+    mctx.strokeStyle = '#ffd93d';
+    mctx.lineWidth = 1.5;
+    mctx.strokeRect(x0 + .5, y0 + .5, w - 1, h - 1);
+  }
+  const cnt = document.getElementById('mapBlockCount');
+  if (cnt) cnt.textContent = edCount() + ' 块';
+}
+function edBlockFromEvent(e){
+  const r = mapCanvas.getBoundingClientRect();
+  const bx = Math.floor((e.clientX - r.left) / r.width * MAP_COLS);
+  const by = Math.floor((e.clientY - r.top) / r.height * MAP_ROWS);
+  return { x: clamp(bx, 0, MAP_COLS - 1), y: clamp(by, 0, MAP_ROWS - 1) };
+}
+function edSet(bx, by, v){ ed.grid[by * MAP_COLS + bx] = v ? 1 : 0; }
+
+mapCanvas.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  mapCanvas.setPointerCapture(e.pointerId);
+  const b = edBlockFromEvent(e);
+  if (ed.tool === 'brush'){ ed.painting = true; edSet(b.x, b.y, 1); edDraw(); }
+  else if (ed.tool === 'eraser'){ ed.painting = true; edSet(b.x, b.y, 0); edDraw(); }
+  else if (ed.tool === 'rect'){ ed.rectStart = b; ed.rectCur = b; edDraw(); }
+});
+mapCanvas.addEventListener('pointermove', e => {
+  if (!ed.painting && !ed.rectStart) return;
+  e.preventDefault();
+  const b = edBlockFromEvent(e);
+  if (ed.painting){ edSet(b.x, b.y, ed.tool === 'brush' ? 1 : 0); edDraw(); }
+  else { ed.rectCur = b; edDraw(); }
+});
+function edPointerUp(){
+  if (ed.rectStart && ed.rectCur){
+    const x0 = Math.min(ed.rectStart.x, ed.rectCur.x), x1 = Math.max(ed.rectStart.x, ed.rectCur.x);
+    const y0 = Math.min(ed.rectStart.y, ed.rectCur.y), y1 = Math.max(ed.rectStart.y, ed.rectCur.y);
+    for (let by = y0; by <= y1; by++) for (let bx = x0; bx <= x1; bx++) edSet(bx, by, 1);
+    ed.rectStart = null; ed.rectCur = null; edDraw();
+  }
+  ed.painting = false;
+}
+mapCanvas.addEventListener('pointerup', edPointerUp);
+mapCanvas.addEventListener('pointercancel', edPointerUp);
+mapCanvas.addEventListener('contextmenu', e => e.preventDefault());
+
+/* 预设地图 */
+function edPreset(name){
+  ed.grid.fill(0);
+  if (name === 'border'){
+    for (let i = 0; i < 200; i++){
+      for (let t = 0; t < 3; t++){
+        ed.grid[i * MAP_COLS + t] = 1;
+        ed.grid[i * MAP_COLS + (199 - t)] = 1;
+        ed.grid[t * MAP_COLS + i] = 1;
+        ed.grid[(199 - t) * MAP_COLS + i] = 1;
+      }
+    }
+  } else if (name === 'maze'){
+    // 每 4 块一道墙、随机开缺口（棋盘式迷宫）
+    for (let i = 0; i < 200; i += 4){
+      for (let j = 0; j < 200; j++){
+        if (Math.random() >= 0.74) continue;
+        ed.grid[i * MAP_COLS + j] = 1;
+        ed.grid[j * MAP_COLS + i] = 1;
+      }
+    }
+  } else if (name === 'random'){
+    for (let n = 0; n < 240; n++){
+      const bx = 2 + Math.floor(Math.random() * 196);
+      const by = 2 + Math.floor(Math.random() * 196);
+      const w = 1 + Math.floor(Math.random() * 4);
+      const h = 1 + Math.floor(Math.random() * 4);
+      for (let y = by; y < Math.min(200, by + h); y++){
+        for (let x = bx; x < Math.min(200, bx + w); x++) ed.grid[y * MAP_COLS + x] = 1;
+      }
+    }
+  } else if (name === 'cross'){
+    // 中心十字：把地图分成四个竞技场
+    const c = 100, arm = 9;
+    for (let i = 0; i < 200; i++){
+      for (let t = -arm; t <= arm; t++){
+        const y1 = c + t, x1 = c + t;
+        if (y1 >= 0 && y1 < 200) ed.grid[y1 * MAP_COLS + i] = 1;
+        if (x1 >= 0 && x1 < 200) ed.grid[i * MAP_COLS + x1] = 1;
+      }
+    }
+  }
+  edDraw();
+}
+function edCollect(){
+  const list = [];
+  for (let idx = 0; idx < ed.grid.length; idx++) if (ed.grid[idx]) list.push(idx);
+  return list;
+}
+function edOverLimit(){
+  const n = edCount();
+  if (n > MAP_MAX_BLOCKS){
+    toast('墙体 ' + n + ' 块，超过上限 ' + MAP_MAX_BLOCKS + '（联机同步需要），请减少');
+    return true;
+  }
+  return false;
+}
+
+function openMapEditor(){
+  ed.grid = Uint8Array.from(S.mapGrid); // 从当前地图继续编辑
+  ed.tool = 'brush'; ed.painting = false; ed.rectStart = null; ed.rectCur = null;
+  document.querySelectorAll('.editor-tools .tool').forEach(b =>
+    b.classList.toggle('active', b.dataset.tool === 'brush'));
+  const box = document.getElementById('mapCodeBox');
+  box.hidden = true; box.value = '';
+  edDraw();
+  showScreen('editor');
+}
+document.getElementById('btnMapEdit').addEventListener('click', openMapEditor);
+document.getElementById('btnEditorBack').addEventListener('click', () => showScreen('menu'));
+document.getElementById('btnMapReset').addEventListener('click', () => {
+  applyMapList([]);
+  saveMapSetting();
+  toast('已恢复默认地图（无墙体）');
+});
+document.querySelectorAll('.editor-tools .tool').forEach(b => {
+  b.addEventListener('click', () => {
+    ed.tool = b.dataset.tool;
+    document.querySelectorAll('.editor-tools .tool').forEach(x => x.classList.toggle('active', x === b));
+  });
+});
+document.querySelectorAll('.editor-presets [data-preset]').forEach(b => {
+  b.addEventListener('click', () => edPreset(b.dataset.preset));
+});
+/* 保存并使用 */
+document.getElementById('btnMapSave').addEventListener('click', () => {
+  if (edOverLimit()) return;
+  applyMapList(edCollect());
+  saveMapSetting();
+  if (S.online && S.role === 'host'){
+    toast('地图已保存，点「重新开始」后同步给成员');
+  } else {
+    toast('地图已保存并使用');
+  }
+  showScreen('menu');
+});
+/* 试玩（联机中禁止：会与其他成员世界不一致） */
+document.getElementById('btnMapPlay').addEventListener('click', () => {
+  if (edOverLimit()) return;
+  if (S.online){ toast('联机中不能试玩，请先用离线模式验证地图'); return; }
+  applyMapList(edCollect());
+  saveMapSetting();
+  showScreen('menu');
+  createGame();
+  startGame();
+});
+/* 导出地图码 */
+document.getElementById('btnMapExport').addEventListener('click', async () => {
+  const box = document.getElementById('mapCodeBox');
+  box.hidden = false;
+  box.value = '生成中…';
+  const code = await encodeMapCode(edCollect());
+  box.value = code;
+  toast('地图码已生成（' + code.length + ' 字符），复制发给好友');
+});
+/* 导入地图码（首次点击显示输入框，再次点击执行导入） */
+document.getElementById('btnMapImport').addEventListener('click', async () => {
+  const box = document.getElementById('mapCodeBox');
+  if (box.hidden){
+    box.hidden = false;
+    box.value = '';
+    box.placeholder = '粘贴好友给的「地图码」，然后再次点击「导入地图码」';
+    toast('请先粘贴地图码，再点一次「导入地图码」');
+    return;
+  }
+  try {
+    const arr = await decodeMapCode(box.value);
+    ed.grid.fill(0);
+    for (const idx of arr){
+      if (Number.isInteger(idx) && idx >= 0 && idx < ed.grid.length) ed.grid[idx] = 1;
+    }
+    edDraw();
+    toast('地图码已导入编辑器，记得点「保存并使用」');
+  } catch (e) {
+    toast(e.message);
+  }
+});
+
+/* =========================================================
    启动
    ========================================================= */
 (function init(){
@@ -1721,6 +2226,36 @@ addEventListener('beforeunload', () => { Net.closeAll(); });
   loadFoodSetting();
   // 加载胜利长度设置
   loadWinLen();
+  // 加载自定义地图
+  loadMapSetting();
   refreshSettingUI();
+
+  /* ---- 本地服务器模式预热 ---- */
+  // 页面由 1.exe 提供时：预填服务器地址（ws 同源直连）
+  if (window.LAN_SERVER){
+    const hp = location.host;
+    const hi = document.getElementById('serverHost');
+    const gi = document.getElementById('serverHostG');
+    if (hi) hi.value = hp;
+    if (gi) gi.value = hp;
+  }
+  // HTTPS 页面禁止连接局域网 ws：显示说明，引导从房主网址打开
+  if (!Net.serverSupported()){
+    document.querySelectorAll('.server-mode-note').forEach(el => { el.hidden = false; });
+  }
+  // 链接带 ?room=NNNNNN（房主发的成员链接）：记住，进菜单后自动加入
+  const m = location.search.match(/[?&]room=(\d{6})/);
+  if (m && Net.serverSupported()){
+    const room = m[1];
+    if (window.LAN_SERVER && window.LAN_SERVER.room && window.LAN_SERVER.room !== room){
+      toast('链接房间号与本服务器不一致，请联系房主');
+    } else {
+      pendingAutoJoin = room;
+      const ri = document.getElementById('roomIn');
+      if (ri) ri.value = room;
+      if (!S.nick) toast('检测到房间号 ' + room + '，取个名字进入后将自动加入');
+    }
+  }
+
   document.getElementById('nickInput').focus();
 })();

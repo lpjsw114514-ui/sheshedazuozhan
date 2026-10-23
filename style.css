@@ -360,6 +360,58 @@ input::placeholder{color:#4d6284}
 .online-info{color:#9fb6d8;display:inline-flex;align-items:center;gap:5px}
 .online-info b{color:#5ee7a0;font-weight:700}
 
+/* 下载按钮（1.exe）：与其他按钮同尺寸 */
+.btn.dl{
+  display:block;width:100%;text-align:center;text-decoration:none;
+  background:linear-gradient(135deg,#ffb84d,#ff8a3d);color:#1a0e00;
+}
+.btn.dl:hover{box-shadow:0 8px 22px rgba(255,150,60,.35)}
+
+/* 服务器模式：成员链接分享区 */
+.server-share{
+  display:flex;flex-direction:column;gap:8px;
+  padding:12px;border-radius:12px;
+  background:rgba(62,207,142,.07);border:1px dashed rgba(62,207,142,.35);
+}
+.server-share input[type=text]{
+  width:100%;padding:10px 12px;border-radius:10px;font-size:13px;
+  background:rgba(10,16,28,.9);border:1px solid rgba(96,140,210,.25);color:#5ee7a0;
+  font-family:ui-monospace,Consolas,monospace;
+}
+
+/* =========================================================
+   6. 地图编辑器
+   ========================================================= */
+.editor-wrap{flex:1;min-height:0;padding:22px;gap:14px;overflow-y:auto;align-items:center;width:100%}
+.editor-wrap > *{width:100%;max-width:560px}
+.editor-card{display:flex;flex-direction:column;gap:12px;padding:18px}
+.editor-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tool{
+  padding:9px 14px;border-radius:10px;font-size:13px;font-weight:700;
+  background:rgba(96,140,210,.1);border:1px solid rgba(96,140,210,.25);color:#9fb6d8;
+  transition:.15s;
+}
+.tool:hover{background:rgba(96,140,210,.18);color:#e8eefc}
+.tool.active{background:linear-gradient(135deg,#3ecf8e,#2aa9e0);color:#04121a;border-color:transparent}
+.editor-count{
+  margin-left:auto;font-size:12px;font-weight:700;color:#ffd93d;
+  font-variant-numeric:tabular-nums;
+}
+.map-canvas-wrap{display:flex;justify-content:center}
+#mapCanvas{
+  width:100%;max-width:440px;aspect-ratio:1/1;border-radius:12px;
+  border:1px solid rgba(96,140,210,.25);background:#0a0f1e;
+  image-rendering:pixelated;touch-action:none;cursor:crosshair;
+}
+.editor-presets{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.editor-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.editor-actions .btn{width:100%;padding:12px 6px;font-size:13px}
+#mapCodeBox{
+  width:100%;padding:10px 12px;border-radius:10px;font-size:11px;line-height:1.5;
+  background:rgba(10,16,28,.9);border:1px solid rgba(96,140,210,.25);color:#9fb6d8;
+  font-family:ui-monospace,Consolas,monospace;resize:vertical;word-break:break-all;outline:none;
+}
+
 /* =========================================================
    5. 手机端适配
    ========================================================= */
@@ -391,6 +443,15 @@ input::placeholder{color:#4d6284}
   .tab{padding:12px 0;font-size:14px}
   .pane textarea{font-size:10px}
   .ai-row select{padding:12px}
+  .server-share input[type=text]{font-size:11px}
+
+  /* 地图编辑器 */
+  .editor-wrap{padding:12px}
+  .editor-card{padding:13px;gap:10px}
+  .tool{padding:11px 13px}
+  .editor-actions{grid-template-columns:repeat(2,1fr)}
+  .editor-actions .btn{min-height:44px;font-size:13px}
+  #mapCodeBox{font-size:10px}
 
   .toast{bottom:22px;font-size:13px;padding:10px 16px;max-width:88vw;text-align:center}
   .respawn-box .msg,.pause-box .msg{font-size:16px;letter-spacing:1px}

@@ -107,6 +107,19 @@
     </div>
   </div>
 
+  <!-- 自定义地图 -->
+  <div class="card setting-card" id="mapCard">
+    <div class="setting-header">
+      <h2 class="setting-title">🗺 自定义地图</h2>
+      <button class="btn ghost small" id="btnMapReset">恢复默认</button>
+    </div>
+    <p class="setting-desc">当前地图：<b id="mapName">默认（无墙体）</b> · 墙体碰到即死</p>
+    <div class="setting-row">
+      <button class="btn" id="btnMapEdit">✏️ 编辑地图</button>
+    </div>
+    <p class="online-tip">支持画笔 / 橡皮 / 矩形与预设（四边框、迷宫、随机障碍、中心十字）；<br>可导出地图码分享，联机时自动使用房主的地图。</p>
+  </div>
+
   <p class="hintbar">
     💡 碰到边界或其他蛇即死亡；身长 ≥ 50 获得「钢筋蛇身」（撞到自己不会死）；
     身长达到胜利长度即获胜（联机时以房主设置为准）。死亡时会在原蛇身位置掉落吃过的食物，3 秒后随机位置重生。
@@ -197,7 +210,6 @@
 
       <!-- 房主 -->
       <div class="pane" id="paneHost">
-        <div class="step">第 1 步 · 选择 AI 数量并创建房间，把邀请码发给成员</div>
         <div class="ai-row">
           <label class="pane-label" for="aiCount">AI 蛇数量</label>
           <select id="aiCount">
@@ -209,39 +221,112 @@
             <option value="0">0 条（纯玩家对战）</option>
           </select>
         </div>
+
+        <div class="step">🚀 方式一 · 本地服务器联机（推荐，成员点链接即进）</div>
+        <p class="online-tip server-mode-note" hidden>⚠ 当前是 HTTPS 页面，浏览器禁止连接局域网服务器。请从房主电脑运行 1.exe 后，用控制台打印的 http://IP:端口 网址打开本游戏。</p>
+        <a class="btn dl" id="btnDownloadExe" href="https://github.com/lpjsw114514-ui/sheshedazuozhan/releases/latest/download/1.exe" target="_blank" rel="noopener">📥 下载联机服务端 1.exe（仅房主需要，约 85MB）</a>
         <div class="ai-row">
-          <label class="pane-label" for="roomNo">房间号（6 位数字，仅作标识）</label>
+          <label class="pane-label" for="serverHost">服务器地址</label>
+          <input type="text" id="serverHost" maxlength="21" placeholder="运行 1.exe 的电脑 IP:端口，如 192.168.1.5:9600" autocomplete="off">
+        </div>
+        <div class="ai-row">
+          <label class="pane-label" for="roomNo">房间号（6 位数字）</label>
           <input type="text" id="roomNo" maxlength="6" placeholder="留空自动生成，如 123456" autocomplete="off" inputmode="numeric">
         </div>
-        <button class="btn" id="btnCreateRoom">创建房间</button>
+        <button class="btn" id="btnServerCreate">🖥 创建服务器房间</button>
+        <div class="server-share" id="serverShare" hidden>
+          <div class="step">第 2 步 · 把成员链接发到群里（点开即入房）：</div>
+          <input type="text" id="serverShareUrl" readonly>
+          <button class="btn ghost small" id="btnCopyShareUrl">📋 复制成员链接</button>
+        </div>
+        <button class="btn" id="btnHostStart">🎮 进入游戏</button>
+        <p class="online-tip">房主需保持 1.exe 窗口和本页面打开；关闭任一 = 房间解散。</p>
+
+        <hr class="divider">
+        <div class="step">方式二 · 手动邀请码（无需任何程序，跨网络也能用）</div>
+        <button class="btn ghost" id="btnCreateRoom">生成邀请码房间</button>
         <textarea id="inviteCode" rows="3" readonly placeholder="邀请码将显示在这里（已压缩，约 1KB）"></textarea>
         <div class="code-meta"><span id="inviteLen"></span><button class="btn ghost small" id="btnCopyInvite">📋 复制邀请码</button></div>
-        <div class="step">第 2 步 · 把成员的回传码粘贴进来</div>
+        <div class="step">把成员的回传码粘贴进来</div>
         <textarea id="answerIn" rows="3" placeholder="粘贴成员回传的「应答码」"></textarea>
-        <button class="btn" id="btnAcceptAnswer">✅ 确认该成员连接</button>
-        <div class="step">第 3 步 · 人齐了就进游戏</div>
-        <button class="btn" id="btnHostStart">🎮 进入游戏</button>
+        <button class="btn ghost" id="btnAcceptAnswer">✅ 确认该成员连接</button>
         <hr class="divider">
         <label class="pane-label" for="hostIp">本机局域网 IP（可选，连不上时填写）</label>
         <input type="text" id="hostIp" maxlength="15" placeholder="如 192.168.1.5，不知道可留空" autocomplete="off">
         <p class="online-tip">查看方法：Win+R → 输入 cmd → 输入 ipconfig → 看「IPv4 地址」。<br>填写后邀请码会带上真实 IP，可解决浏览器隐藏本机 IP 导致的连不上。</p>
-        <p class="online-tip">每来一位新成员，需再点一次「创建房间」生成新邀请码。<br>房主刷新页面 = 房间解散；房主页面请保持前台打开。</p>
+        <p class="online-tip">每来一位新成员，需再点一次「生成邀请码房间」。<br>房主刷新页面 = 房间解散；房主页面请保持前台打开。</p>
       </div>
 
       <!-- 成员 -->
       <div class="pane" id="paneGuest" hidden>
-        <div class="step">第 1 步 · 粘贴房主发来的邀请码</div>
+        <div class="step">🚀 方式一 · 输入服务器地址 + 房间号加入</div>
+        <p class="online-tip server-mode-note" hidden>⚠ 当前是 HTTPS 页面，浏览器禁止连接局域网服务器。请直接点开房主发的成员链接（http://IP:端口/?room=NNNNNN）。</p>
+        <div class="ai-row">
+          <label class="pane-label" for="serverHostG">服务器地址</label>
+          <input type="text" id="serverHostG" maxlength="21" placeholder="房主的 IP:端口，如 192.168.1.5:9600" autocomplete="off">
+        </div>
+        <div class="ai-row">
+          <label class="pane-label" for="roomIn">房间号（6 位）</label>
+          <input type="text" id="roomIn" maxlength="6" placeholder="房主给的 6 位房间号" autocomplete="off" inputmode="numeric">
+        </div>
+        <button class="btn" id="btnServerJoin">🚀 加入服务器房间</button>
+        <p class="online-tip">最省事的方式：直接点开房主发的成员链接，会自动带上房间号。</p>
+
+        <hr class="divider">
+        <div class="step">方式二 · 手动邀请码（无需任何程序）</div>
         <textarea id="inviteIn" rows="3" placeholder="粘贴房主的「邀请码」"></textarea>
-        <button class="btn" id="btnJoinRoom">🔑 生成我的应答码</button>
-        <div class="step">第 2 步 · 把应答码发回给房主</div>
+        <button class="btn ghost" id="btnJoinRoom">🔑 生成我的应答码</button>
+        <div class="step">把应答码发回给房主</div>
         <textarea id="answerCode" rows="3" readonly placeholder="应答码将显示在这里（已压缩，约 1KB）"></textarea>
         <div class="code-meta"><span id="answerLen"></span><button class="btn ghost small" id="btnCopyAnswer">📋 复制应答码</button></div>
         <hr class="divider">
         <label class="pane-label" for="guestIp">本机局域网 IP（可选，连不上时填写）</label>
         <input type="text" id="guestIp" maxlength="15" placeholder="如 192.168.1.8，不知道可留空" autocomplete="off">
         <p class="online-tip">查看方法：Win+R → 输入 cmd → 输入 ipconfig → 看「IPv4 地址」。</p>
-        <p class="online-tip">发给房主后等他点「确认连接」，收到游戏画面即自动进房。</p>
+        <p class="online-tip">发给房主后等他点「确认该成员连接」，收到游戏画面即自动进房。</p>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 3.5 地图编辑器 ========== -->
+<div class="screen" id="scr-editor">
+  <div class="editor-wrap">
+    <div class="topbar">
+      <span class="me">🗺 地图编辑器 · <b>200×200</b> 块（每块 8×8 格）</span>
+      <button class="btn ghost" id="btnEditorBack">← 返回菜单</button>
+    </div>
+
+    <div class="card editor-card">
+      <div class="editor-tools">
+        <button class="tool active" data-tool="brush">🖌 画笔</button>
+        <button class="tool" data-tool="eraser">🧽 橡皮</button>
+        <button class="tool" data-tool="rect">▭ 矩形</button>
+        <span class="editor-count" id="mapBlockCount">0 块</span>
+      </div>
+
+      <div class="map-canvas-wrap">
+        <canvas id="mapCanvas" width="400" height="400"></canvas>
+      </div>
+
+      <div class="editor-presets">
+        <span class="pane-label">预设：</span>
+        <button class="btn ghost small" data-preset="empty">空白</button>
+        <button class="btn ghost small" data-preset="border">四边框</button>
+        <button class="btn ghost small" data-preset="maze">迷宫</button>
+        <button class="btn ghost small" data-preset="random">随机障碍</button>
+        <button class="btn ghost small" data-preset="cross">中心十字</button>
+      </div>
+
+      <div class="editor-actions">
+        <button class="btn" id="btnMapSave">💾 保存并使用</button>
+        <button class="btn ghost" id="btnMapPlay">▶ 试玩</button>
+        <button class="btn ghost" id="btnMapExport">📤 导出地图码</button>
+        <button class="btn ghost" id="btnMapImport">📥 导入地图码</button>
+      </div>
+
+      <textarea id="mapCodeBox" rows="2" placeholder="地图码将显示在这里" hidden></textarea>
+      <p class="online-tip">提示：墙体碰到即死；蛇不会出生在墙里，食物也不会生成在墙里。<br>联机时自动使用房主保存的地图；上限 30000 块（保证同步体积）。</p>
     </div>
   </div>
 </div>
