@@ -3,7 +3,10 @@
    ========================================================= */
 
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html,body{height:100%;overflow:hidden}
+/* 关键修复：.room-bar/.pane 等 flex 容器会覆盖 [hidden] 的默认 display:none，
+   导致"离线也显示房间条""两个联机面板同时出现"。用 important 统一兜底。 */
+[hidden]{display:none!important}
+html,body{height:100%;overflow:hidden;overscroll-behavior:none}
 body{
   font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
   background:#070b14;color:#e8eefc;
@@ -178,6 +181,16 @@ input::placeholder{color:#4d6284}
   background:rgba(62,207,142,.08);border:1px solid rgba(62,207,142,.2);
 }
 .setting-summary b{color:#5ee7a0;font-weight:800;font-variant-numeric:tabular-nums}
+.setting-summary.win-summary{background:rgba(255,215,80,.07);border-color:rgba(255,215,80,.22)}
+.setting-summary.win-summary b{color:#ffd93d}
+
+/* 数字输入（胜利长度） */
+.num-input{
+  width:100%;padding:12px 14px;border-radius:12px;font-size:15px;font-weight:700;
+  background:rgba(10,16,28,.9);border:1px solid rgba(96,140,210,.25);
+  color:#e8eefc;transition:.2s;font-variant-numeric:tabular-nums;
+}
+.num-input:focus{border-color:#5bc8ff;box-shadow:0 0 0 3px rgba(91,200,255,.15)}
 
 .hintbar{
   font-size:12px;color:#5f78a0;line-height:1.7;padding:0 4px;
@@ -191,6 +204,7 @@ input::placeholder{color:#4d6284}
 #canvas{
   display:block;border-radius:12px;
   box-shadow:0 0 60px rgba(60,120,255,.18),0 0 0 1px rgba(96,140,210,.2) inset;
+  touch-action:none; /* 防止触屏滑动时页面滚动/下拉刷新 */
 }
 
 .hud{
@@ -209,6 +223,7 @@ input::placeholder{color:#4d6284}
 .score b{color:#ffd93d;font-weight:700;font-variant-numeric:tabular-nums}
 .score b.immune{color:#ffe97a;text-shadow:0 0 10px rgba(255,217,61,.85)}
 .food-info b{color:#5ee7a0}
+.win-target{color:#5f78a0;font-size:11px;margin-left:1px;font-variant-numeric:tabular-nums}
 
 .players-panel{
   position:absolute;right:18px;top:64px;width:176px;
@@ -245,6 +260,27 @@ input::placeholder{color:#4d6284}
   font-variant-numeric:tabular-nums;
 }
 .pause-box .btn{margin:0 6px 10px}
+.win-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:6px}
+
+/* ---------- 手机端虚拟方向键 ---------- */
+.dpad{
+  position:absolute;left:16px;bottom:16px;z-index:6;
+  display:none;grid-template-columns:repeat(3,56px);grid-template-rows:repeat(3,56px);
+  gap:6px;touch-action:none;user-select:none;-webkit-user-select:none;
+}
+.dpad-btn{
+  border-radius:14px;background:rgba(12,20,36,.7);
+  border:1px solid rgba(96,140,210,.35);color:#b9cdf0;font-size:20px;
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(6px);touch-action:none;
+}
+.dpad-btn:active{background:rgba(62,207,142,.32);color:#fff;transform:scale(.94)}
+.dpad .up{grid-area:1/2}
+.dpad .left{grid-area:2/1}
+.dpad .right{grid-area:2/3}
+.dpad .down{grid-area:3/2}
+/* 仅触屏设备显示方向键 */
+@media (pointer:coarse){.dpad{display:grid}}
 
 /* ---------- 提示条 ---------- */
 .toast{
@@ -308,6 +344,11 @@ input::placeholder{color:#4d6284}
   border:1px solid rgba(94,231,160,.35);border-radius:14px;
 }
 .room-info{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:700;color:#5ee7a0}
+.room-no{
+  font-size:12px;font-weight:700;color:#ffd93d;
+  background:rgba(255,215,80,.12);border:1px solid rgba(255,215,80,.3);
+  padding:3px 10px;border-radius:20px;font-variant-numeric:tabular-nums;
+}
 .room-dot{
   width:9px;height:9px;border-radius:50%;background:#5ee7a0;flex:none;
   box-shadow:0 0 8px rgba(94,231,160,.8);animation:roomPulse 1.6s ease-in-out infinite;
@@ -318,3 +359,46 @@ input::placeholder{color:#4d6284}
 /* HUD 联机状态 */
 .online-info{color:#9fb6d8;display:inline-flex;align-items:center;gap:5px}
 .online-info b{color:#5ee7a0;font-weight:700}
+
+/* =========================================================
+   5. 手机端适配
+   ========================================================= */
+@media(max-width:640px){
+  #scr-menu{padding:14px;gap:12px}
+  .mode-card{min-height:118px;padding:18px}
+  .mode-icon{font-size:30px}
+  .mode-title{font-size:17px}
+  .setting-card{padding:14px 16px}
+  .room-bar{padding:11px 14px;gap:8px}
+  .room-info{font-size:12px}
+  .room-actions .btn.small{padding:8px 12px;font-size:12px}
+  .hintbar{font-size:11px}
+
+  /* 游戏 HUD：更紧凑、按钮加大到可点区域 */
+  .hud{padding:9px 11px;gap:8px}
+  .score{font-size:11px;padding:5px 10px}
+  .hud-right{gap:6px}
+  .hud-right .btn{padding:10px 13px;font-size:13px;min-height:40px}
+  .players-panel{
+    width:124px;top:56px;right:10px;padding:7px;
+    max-height:30vh;border-radius:10px;
+  }
+  .pp-row{font-size:11px;padding:3px 5px}
+
+  /* 联机大厅 */
+  .online-wrap{padding:12px}
+  .online-card{padding:15px;gap:11px}
+  .tab{padding:12px 0;font-size:14px}
+  .pane textarea{font-size:10px}
+  .ai-row select{padding:12px}
+
+  .toast{bottom:22px;font-size:13px;padding:10px 16px;max-width:88vw;text-align:center}
+  .respawn-box .msg,.pause-box .msg{font-size:16px;letter-spacing:1px}
+  .countdown{font-size:34px}
+  .pause-box .btn,.win-actions .btn{padding:12px 18px;font-size:14px;min-height:44px}
+}
+/* 横屏手机：方向键缩小避免遮挡 */
+@media(max-height:460px){
+  .dpad{grid-template-columns:repeat(3,46px);grid-template-rows:repeat(3,46px);left:10px;bottom:10px}
+  .players-panel{max-height:44vh}
+}

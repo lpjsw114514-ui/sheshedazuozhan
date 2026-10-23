@@ -21,7 +21,7 @@ const Net = (function () {
   const ICE_WAIT_MS = 3000; // 等待 ICE 候选收集完的上限
 
   let role = null;            // 'host' | 'guest'
-  let peerSeq = 0;            // 房主侧同学编号
+  let peerSeq = 0;            // 房主侧成员编号
   const peers = new Map();    // host: id -> { pc, dc, id, answered }
   let guestPC = null, guestDC = null;
 
@@ -212,10 +212,10 @@ const Net = (function () {
     let data;
     try { data = await dec(codeStr); }
     catch (e) { return { ok: false, err: e.message }; }
-    if (data.role !== 'answer') return { ok: false, err: '这不是应答码（应是同学生成的回传码）' };
+    if (data.role !== 'answer') return { ok: false, err: '这不是应答码（应是成员生成的回传码）' };
     const peer = peers.get(data.id);
     if (!peer) return { ok: false, err: '找不到对应邀请（页面刷新过或邀请码已过期，请重新创建房间）' };
-    if (peer.answered) return { ok: false, err: '该同学已确认过，请勿重复粘贴' };
+    if (peer.answered) return { ok: false, err: '该成员已确认过，请勿重复粘贴' };
     try {
       await peer.pc.setRemoteDescription({ type: 'answer', sdp: data.sdp.sdp });
       peer.answered = true;
@@ -225,7 +225,7 @@ const Net = (function () {
     }
   }
 
-  /* ================= 同学 ================= */
+  /* ================= 成员 ================= */
   async function joinWithCode(codeStr, myIp) {
     let invite;
     try { invite = await dec(codeStr); }

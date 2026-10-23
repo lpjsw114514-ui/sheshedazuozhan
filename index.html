@@ -50,6 +50,7 @@
     <div class="room-info">
       <span class="room-dot"></span>
       <span id="roomBarText">房间进行中</span>
+      <span class="room-no" id="roomBarNo" hidden>房间号 <b id="roomBarNoText"></b></span>
     </div>
     <div class="room-actions">
       <button class="btn small" id="btnBackToGame">🎮 返回游戏</button>
@@ -87,15 +88,28 @@
       </div>
     </div>
 
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">🏆 胜利长度</span>
+        <span class="setting-value" id="winLenValue">3000</span>
+      </div>
+      <input type="number" id="winLen" class="num-input" min="100" max="5000" step="100" value="3000" inputmode="numeric">
+      <div class="setting-ticks">
+        <span>100</span><span>自定义范围 100 ~ 5000</span><span>5000</span>
+      </div>
+    </div>
+
     <div class="setting-summary" id="settingSummary">
       当前设置：每 25 格 <b>1 ~ 7</b> 个食物
+    </div>
+    <div class="setting-summary win-summary" id="settingSummaryWin">
+      胜利长度 <b>3000</b>（身长达到即胜利）
     </div>
   </div>
 
   <p class="hintbar">
-    💡 离线版：与 5 条 AI 蛇在 1600×1600 大世界中竞技。
-    碰到边界、自己或其他蛇即死亡，死亡时会在原蛇身位置掉落吃过的食物。
-    3 秒后在随机位置重生。
+    💡 碰到边界或其他蛇即死亡；身长 ≥ 50 获得「钢筋蛇身」（撞到自己不会死）；
+    身长达到胜利长度即获胜（联机时以房主设置为准）。死亡时会在原蛇身位置掉落吃过的食物，3 秒后随机位置重生。
   </p>
 </div>
 
@@ -106,10 +120,10 @@
   <div class="hud">
     <div class="hud-left">
       <span class="score">得分 <b id="hudScore">0</b></span>
-      <span class="score">长度 <b id="hudLength">5</b></span>
+      <span class="score">长度 <b id="hudLength">5</b><span class="win-target" id="hudWinTarget">/3000</span></span>
       <span class="score">排名 <b id="hudRank">1</b>/<span id="hudTotal">6</span></span>
       <span class="score food-info">食物 <b id="hudFoodRange">1~7</b></span>
-      <span class="score online-info" id="hudOnline" hidden>🌐 <b id="hudOnlineCount">1</b> 人 · <span id="hudOnlineRole">房主</span></span>
+      <span class="score online-info" id="hudOnline" hidden>🌐 <b id="hudOnlineCount">1</b> 人 · <span id="hudOnlineRole">房主</span><span id="hudRoomNo"></span></span>
     </div>
     <div class="hud-right">
       <button class="btn ghost" id="btnPause">暂停</button>
@@ -127,13 +141,34 @@
     </div>
   </div>
 
-  <!-- 联机：房主暂离时同学端等待 -->
+  <!-- 联机：房主暂离时成员端等待 -->
   <div class="respawn-overlay" id="awayOverlay">
     <div class="respawn-box">
       <div class="dead-icon">⏳</div>
       <div class="msg">房主暂时离开</div>
       <div class="countdown" id="awayTip">连接保持中，等待房主返回…</div>
     </div>
+  </div>
+
+  <!-- 胜利结算 -->
+  <div class="pause-overlay" id="winOverlay">
+    <div class="pause-box">
+      <div class="pause-icon" id="winIcon">🏆</div>
+      <div class="msg" id="winMsg">获得胜利！</div>
+      <div class="countdown" id="winLen">身长 3000</div>
+      <div class="win-actions">
+        <button class="btn" id="btnWinRestart">重新开始</button>
+        <button class="btn ghost" id="btnWinMenu">返回菜单</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 手机端虚拟方向键（触屏设备显示） -->
+  <div class="dpad" id="dpad">
+    <button class="dpad-btn up" data-dir="up" aria-label="上">▲</button>
+    <button class="dpad-btn left" data-dir="left" aria-label="左">◀</button>
+    <button class="dpad-btn right" data-dir="right" aria-label="右">▶</button>
+    <button class="dpad-btn down" data-dir="down" aria-label="下">▼</button>
   </div>
 
   <div class="pause-overlay" id="pauseOverlay">
@@ -157,12 +192,12 @@
     <div class="card online-card">
       <div class="tabs">
         <button class="tab active" id="tabHost">我是房主</button>
-        <button class="tab" id="tabGuest">我是同学</button>
+        <button class="tab" id="tabGuest">我是成员</button>
       </div>
 
       <!-- 房主 -->
       <div class="pane" id="paneHost">
-        <div class="step">第 1 步 · 选择 AI 数量并创建房间，把邀请码发给同学</div>
+        <div class="step">第 1 步 · 选择 AI 数量并创建房间，把邀请码发给成员</div>
         <div class="ai-row">
           <label class="pane-label" for="aiCount">AI 蛇数量</label>
           <select id="aiCount">
@@ -174,22 +209,26 @@
             <option value="0">0 条（纯玩家对战）</option>
           </select>
         </div>
+        <div class="ai-row">
+          <label class="pane-label" for="roomNo">房间号（6 位数字，仅作标识）</label>
+          <input type="text" id="roomNo" maxlength="6" placeholder="留空自动生成，如 123456" autocomplete="off" inputmode="numeric">
+        </div>
         <button class="btn" id="btnCreateRoom">创建房间</button>
         <textarea id="inviteCode" rows="3" readonly placeholder="邀请码将显示在这里（已压缩，约 1KB）"></textarea>
         <div class="code-meta"><span id="inviteLen"></span><button class="btn ghost small" id="btnCopyInvite">📋 复制邀请码</button></div>
-        <div class="step">第 2 步 · 把同学的回传码粘贴进来</div>
-        <textarea id="answerIn" rows="3" placeholder="粘贴同学回传的「应答码」"></textarea>
-        <button class="btn" id="btnAcceptAnswer">✅ 确认该同学连接</button>
+        <div class="step">第 2 步 · 把成员的回传码粘贴进来</div>
+        <textarea id="answerIn" rows="3" placeholder="粘贴成员回传的「应答码」"></textarea>
+        <button class="btn" id="btnAcceptAnswer">✅ 确认该成员连接</button>
         <div class="step">第 3 步 · 人齐了就进游戏</div>
         <button class="btn" id="btnHostStart">🎮 进入游戏</button>
         <hr class="divider">
         <label class="pane-label" for="hostIp">本机局域网 IP（可选，连不上时填写）</label>
         <input type="text" id="hostIp" maxlength="15" placeholder="如 192.168.1.5，不知道可留空" autocomplete="off">
         <p class="online-tip">查看方法：Win+R → 输入 cmd → 输入 ipconfig → 看「IPv4 地址」。<br>填写后邀请码会带上真实 IP，可解决浏览器隐藏本机 IP 导致的连不上。</p>
-        <p class="online-tip">每来一位新同学，需再点一次「创建房间」生成新邀请码。<br>房主刷新页面 = 房间解散；房主页面请保持前台打开。</p>
+        <p class="online-tip">每来一位新成员，需再点一次「创建房间」生成新邀请码。<br>房主刷新页面 = 房间解散；房主页面请保持前台打开。</p>
       </div>
 
-      <!-- 同学 -->
+      <!-- 成员 -->
       <div class="pane" id="paneGuest" hidden>
         <div class="step">第 1 步 · 粘贴房主发来的邀请码</div>
         <textarea id="inviteIn" rows="3" placeholder="粘贴房主的「邀请码」"></textarea>
