@@ -5,7 +5,6 @@
    ========================================================= */
 
 /* ---------------- 常量 ---------------- */
-const W = 1600, H = 1600;
 const CELL = 20;
 const TICK_MS = 90;
 const FOOD_TYPES = ['🍎', '🍌', '🍅'];
@@ -13,25 +12,34 @@ const COLORS = ['#5ee7a0','#5bc8ff','#a78bfa','#ffd93d','#ff7b7b','#ff9f5b','#4d
 const START_LEN = 5;
 const AI_COUNT = 5;
 const RESPAWN_MS = 3000;
+/* 蛇的 sid 分配（面板行以 sid 为 key，必须全局唯一，否则行互相覆盖）：
+   本地玩家 = PLAYER_SID；AI = 1000+i；远程成员 = 5000+peerId；
+   快照里房主蛇用 HOST_SNAP_SID——成员端自己的 player 也是 PLAYER_SID，
+   若房主 sid 与它相同，面板行会被覆盖（成员端看不到房主就是这么来的）。 */
+const PLAYER_SID = 1;
+const HOST_SNAP_SID = 100001;
 /* 长度达到该值后获得"钢筋蛇身"：撞到自己不会死（撞别人/边界照死） */
 const SELF_IMMUNE_LEN = 50;
 /* 胜利长度：身长达到该值即胜利（防止无限增长占满地图），可自定义 */
 const WIN_LEN_DEFAULT = 3000;
 const WIN_LEN_MIN = 100;
-const WIN_LEN_MAX = 5000;
+const WIN_LEN_MAX = 100000;
 const NICK_KEY = 'snake_arena_nick';
 const FOOD_SETTING_KEY = 'snake_arena_food_setting';
 const WIN_LEN_KEY = 'snake_arena_win_len';
-const MAP_KEY = 'snake_arena_map';
+const MAP_SIZE_KEY = 'snake_arena_map_size';
 
-/* ---------------- 自定义地图 ----------------
-   世界按 8×8 格为一块（200×200 = 40000 块），墙体按块放置：
-   - 碰撞/生成/出生避让都按块判定，O(1) 查询
-   - 联机时房主的地图随欢迎包同步（块索引数组） */
-const MAP_BLOCK = 8;
-const MAP_COLS = W / MAP_BLOCK;   // 200
-const MAP_ROWS = H / MAP_BLOCK;   // 200
-const MAP_MAX_BLOCKS = 30000;     // 上限：控制欢迎包体积（DataChannel 64KB 限制）
+/* ---------------- 地图尺寸选择 ----------------
+   世界按格计数（每格 CELL 像素），联机时随房主欢迎包同步。
+   胜利长度 = 2 × 边长格数。artifact = 房主拥有神器面板。 */
+const MAP_SIZES = [
+  { cols: 200,  rows: 200,  win: 400,  artifact: false },
+  { cols: 400,  rows: 400,  win: 800,  artifact: false },
+  { cols: 800,  rows: 800,  win: 1600, artifact: false },
+  { cols: 1600, rows: 1600, win: 2500, artifact: false },
+  { cols: 1600, rows: 1600, win: 2500, artifact: true },
+];
+const DEFAULT_MAP_IDX = 0;
 
 /* 食物密度默认值：每 5×5 区域 1~7 个 */
 const FOOD_GRID = 5;
@@ -77,17 +85,26 @@ const S = {
   aiCount: AI_COUNT,    // 联机房间 AI 蛇数量（房主可自定义，0 = 纯玩家对战）
   hostAway: false,      // 成员：房主是否暂离
   immuneNotified: false, // 是否已提示过"钢筋蛇身"
-  winLen: WIN_LEN_DEFAULT, // 胜利长度（可自定义）
+  winLen: WIN_LEN_DEFAULT, // 胜利长度（按地图自动设定）
   roomNo: '',           // 房间号（6 位数字，仅作标识，与加入流程无关）
   winner: null,         // 胜利者信息 { name, color, len, isPlayer }
+  continued: false,     // 本局是否已进入「继续」模式（胜利后不清场继续）
   enteredGame: false,   // 联机中是否已进入过游戏（控制主菜单房间条按钮语义）
   rejoining: false,     // 成员：是否正在请求重进（收到欢迎包时立即进房）
   pendingWelcome: false,// 成员：主菜单上有待处理的欢迎包（点了返回游戏才进）
   serverMode: false,    // 本地服务器模式（房主电脑运行 1.exe，消息经其中转）
-  /* 自定义地图：blockGrid 供 O(1) 碰撞查询，blockList 供渲染/同步/编辑器 */
-  mapGrid: new Uint8Array(MAP_COLS * MAP_ROWS),
-  mapList: [],          // 已放置的块索引（有序）
-  mapName: '默认（无墙体）',
+  /* 地图尺寸（格） */
+  world: { cols: 200, rows: 200, artifact: false },
+  mapSizeIdx: DEFAULT_MAP_IDX,
+  /* 神器（仅 artifact 地图，房主可用） */
+  artifact: { immortal: false, magnet: false },
+  /* 竞赛模式（仅房主在联机大厅配置，联机生效）：到时按身长排名结算 */
+  comp: { on: false, minutes: 10, endAt: 0, over: false },
+  blackout: false,      // 成员：被房主黑屏中
+  snapWorldCols: 0,     // 房主：已广播给成员的世界列数（变化时才重发）
+  snapWorldRows: 0,     // 房主：已广播给成员的世界行数
+  manageOpen: null,     // 房主：玩家列表管理菜单打开的 peerId（null=关闭）
+  mouse: { x: 0, y: 0, over: false }, // 鼠标在画布内的屏幕坐标（靠近蛇身弹信息卡用）
 };
 
 let foodId = 0;
@@ -118,6 +135,22 @@ function unpackBody(arr){
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+/* 蛇的显示名：房主带「· 房主」，成员带「· 成员N」 */
+function snakeLabel(s){
+  let base;
+  if (s.isPlayer){
+    base = S.nick || '你';
+    if (S.role === 'host') base += ' · 房主';
+  } else if (s.isHost){
+    base = (s.name || '房主') + ' · 房主';
+  } else if (s.memberNo){
+    base = (s.name || '成员' + s.memberNo) + ' · 成员' + s.memberNo;
+  } else {
+    base = s.name || '';
+  }
+  if (s.gifted) base += ' · 神器'; // 房主赠送的神器标识
+  return base;
+}
 function copyText(ta){
   ta.select();
   ta.setSelectionRange(0, 1e9);
@@ -131,7 +164,10 @@ function copyText(ta){
 
 /* ---------------- 工具 ---------------- */
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
-function inBounds(x, y){ return x >= 0 && x < W && y >= 0 && y < H; }
+/* 世界尺寸（格），随地图像素/加长扩界动态变化 */
+function worldCols(){ return S.world.cols; }
+function worldRows(){ return S.world.rows; }
+function inBounds(x, y){ return x >= 0 && x < S.world.cols && y >= 0 && y < S.world.rows; }
 
 let toastTimer = null;
 /* 本地服务器模式：从成员链接打开时，进菜单后自动加入房间 */
@@ -148,12 +184,19 @@ function showScreen(name){
   document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
   const el = document.getElementById('scr-' + name);
   if (el) el.classList.add('active');
-  // 离开游戏画面时收起所有覆盖层（暂停/死亡/等待/胜利），避免"未进游戏还显示"
+  // 离开游戏画面时收起所有覆盖层（暂停/死亡/等待/胜利/黑屏/神器面板），避免"未进游戏还显示"
   if (name !== 'game'){
-    ['pauseOverlay', 'respawnOverlay', 'awayOverlay', 'winOverlay'].forEach(id => {
+    ['pauseOverlay', 'respawnOverlay', 'awayOverlay', 'winOverlay', 'blackOverlay', 'compOverlay'].forEach(id => {
       const ov = document.getElementById(id);
       if (ov) ov.classList.remove('show');
     });
+    const ap = document.getElementById('artifactPanel');
+    if (ap) ap.classList.remove('show');
+    const si = document.getElementById('snakeInfo');
+    if (si) si.classList.remove('show');
+    S.mouse.over = false;
+    hideRowDetail();   // 收起玩家面板 hover 详情卡
+    hideManageMenu();  // 收起管理菜单
   }
   if (name === 'menu') refreshRoomBar();
 }
@@ -241,98 +284,36 @@ function saveWinLen(){
 }
 
 /* =========================================================
-   自定义地图：墙体数据 / 编解码 / 持久化
+   地图尺寸选择（联机时随房主欢迎包同步）
    ========================================================= */
-function isWall(x, y){
-  if (x < 0 || x >= W || y < 0 || y >= H) return false; // 越界由边界判定负责
-  return S.mapGrid[(y >> 3) * MAP_COLS + (x >> 3)] === 1;
-}
-function isWallBlock(bx, by){
-  if (bx < 0 || bx >= MAP_COLS || by < 0 || by >= MAP_ROWS) return false;
-  return S.mapGrid[by * MAP_COLS + bx] === 1;
-}
-/* 用块索引列表重建 mapGrid + mapList（联机同步/读取存档都用它） */
-function applyMapList(indices){
-  S.mapGrid.fill(0);
-  S.mapList = [];
-  for (const idx of indices || []){
-    if (!Number.isInteger(idx) || idx < 0 || idx >= MAP_COLS * MAP_ROWS) continue;
-    if (S.mapGrid[idx]) continue;
-    S.mapGrid[idx] = 1;
-    S.mapList.push(idx);
+/* 尺寸地图无墙体：保留 isWall 供碰撞/生成逻辑统一判断，恒为 false */
+function isWall(x, y){ return false; }
+function isWallBlock(bx, by){ return false; }
+
+/* 选择地图尺寸：重设世界尺寸与胜利长度 */
+function setMapSize(idx, opts){
+  const o = opts || {};
+  const i = clamp(idx | 0, 0, MAP_SIZES.length - 1);
+  const size = MAP_SIZES[i];
+  S.mapSizeIdx = i;
+  S.world = { cols: size.cols, rows: size.rows, artifact: !!size.artifact };
+  S.winLen = size.win;
+  S.artifact = { immortal: false, magnet: false };
+  if (!o.silent){
+    try { localStorage.setItem(MAP_SIZE_KEY, String(i)); } catch(e){}
+    refreshMapUI();
+    refreshWinLenUI();
   }
-  S.mapList.sort((a, b) => a - b);
-  S.mapName = S.mapList.length
-    ? '自定义地图（' + S.mapList.length + ' 块）'
-    : '默认（无墙体）';
-  refreshMapUI();
-  rebuildMinimapWalls();
 }
-
-/* ---- 地图码（分享用）：M1.<base64(JSON 索引数组)> ---- */
-function b64decodeLocal(str){
-  const bin = atob(str);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
-}
-async function encodeMapCode(indices){
-  const raw = new TextEncoder().encode(JSON.stringify(indices));
-  let bin = '';
-  for (const b of raw) bin += String.fromCharCode(b);
-  const payload = btoa(bin);
-  return 'M1.' + payload;
-}
-async function decodeMapCode(code){
-  code = String(code || '').trim();
-  if (!code) throw new Error('地图码为空');
-  const m = code.match(/^M1\.([A-Za-z0-9+/=]+)$/);
-  if (!m) throw new Error('地图码格式不正确（应以 M1. 开头）');
-  let bytes;
-  try { bytes = b64decodeLocal(m[1]); } catch (e) { throw new Error('地图码已损坏，请重新复制'); }
-  let arr;
-  try { arr = JSON.parse(new TextDecoder().decode(bytes)); }
-  catch (e) { throw new Error('地图码内容解析失败'); }
-  if (!Array.isArray(arr)) throw new Error('地图码内容无效');
-  if (arr.length > MAP_MAX_BLOCKS) throw new Error('地图码包含 ' + arr.length + ' 块，超过上限 ' + MAP_MAX_BLOCKS);
-  return arr;
-}
-
-/* ---- 本地存档：原始索引 JSON（同步读取，启动时零延迟） ---- */
-function saveMapSetting(){
-  try { localStorage.setItem(MAP_KEY, JSON.stringify(S.mapList)); } catch(e){}
-}
-function loadMapSetting(){
+function loadMapSize(){
+  let idx = DEFAULT_MAP_IDX;
   try {
-    const raw = localStorage.getItem(MAP_KEY);
-    if (!raw) return;
-    const arr = JSON.parse(raw);
-    if (Array.isArray(arr)) applyMapList(arr.slice(0, MAP_MAX_BLOCKS));
+    const v = parseInt(localStorage.getItem(MAP_SIZE_KEY), 10);
+    if (Number.isFinite(v)) idx = clamp(v, 0, MAP_SIZES.length - 1);
   } catch(e){}
-}
-function refreshMapUI(){
-  const nameEl = document.getElementById('mapName');
-  if (nameEl) nameEl.textContent = S.mapName;
-  const cnt = document.getElementById('mapBlockCount');
-  if (cnt) cnt.textContent = S.mapList.length + ' 块';
+  setMapSize(idx, { silent: true });
 }
 
-/* ---- 小地图墙体缓存：地图变化时预渲染，帧内只贴图 ---- */
-let minimapWallCache = null;
-function rebuildMinimapWalls(){
-  minimapWallCache = null;
-  if (!S.mapList.length) return;
-  const c = document.createElement('canvas');
-  c.width = 160; c.height = 160;
-  const cx = c.getContext('2d');
-  const k = 160 / Math.max(W, H) * MAP_BLOCK; // 每块像素
-  cx.fillStyle = 'rgba(120,150,210,.45)';
-  for (const idx of S.mapList){
-    const bx = idx % MAP_COLS, by = (idx / MAP_COLS) | 0;
-    cx.fillRect(bx * k, by * k, Math.ceil(k), Math.ceil(k));
-  }
-  minimapWallCache = c;
-}
 
 /* =========================================================
    空间哈希：食物桶
@@ -389,7 +370,7 @@ function makeSnake(isPlayer, color){
     name: '', sid: 0, isRemote: false,
     snake: [], prevSnake: [],
     dir: { x: 1, y: 0 }, nextDir: null,
-    alive: true, score: 0, respawnAt: 0,
+    alive: true, score: START_LEN, respawnAt: 0, // score 语义=身长（与长度恒等）
     eatenTypes: [],
   };
 }
@@ -400,40 +381,33 @@ function makeSnake(isPlayer, color){
 function findSpawn(){
   const rng = S.rng || Math.random;
   for (let attempt = 0; attempt < 300; attempt++){
-    const x = 12 + Math.floor(rng() * (W - 24));
-    const y = 12 + Math.floor(rng() * (H - 24));
+    const x = 12 + Math.floor(rng() * (S.world.cols - 24));
+    const y = 12 + Math.floor(rng() * (S.world.rows - 24));
     let ok = true;
     for (const s of allSnakes()){
       if (!s.alive || !s.snake.length) continue;
       const h = s.snake[0];
-      let dx = Math.abs(h.x - x); dx = Math.min(dx, W - dx);
-      let dy = Math.abs(h.y - y); dy = Math.min(dy, H - dy);
+      let dx = Math.abs(h.x - x); dx = Math.min(dx, S.world.cols - dx);
+      let dy = Math.abs(h.y - y); dy = Math.min(dy, S.world.rows - dy);
       if (dx < 15 && dy < 15){ ok = false; break; }
-    }
-    // 避开墙体：检查出生点周边 24×24 格覆盖的 9 个块
-    if (ok){
-      for (let dy = -8; dy <= 8; dy += 8){
-        for (let dx = -8; dx <= 8; dx += 8){
-          if (isWallBlock((x + dx) >> 3, (y + dy) >> 3)){ ok = false; break; }
-        }
-        if (!ok) break;
-      }
     }
     if (ok) return { x, y };
   }
-  // 兜底：全场扫描第一块无墙区域（保证有墙地图也一定能出生）
-  for (let by = 2; by < MAP_ROWS - 2 && !ok; by += 3){
-    for (let bx = 2; bx < MAP_COLS - 2; bx += 3){
+  // 兜底：远离所有蛇头的网格点（大地图按步长采样，开销可控）
+  for (let y = 2; y < S.world.rows - 2; y += 3){
+    for (let x = 2; x < S.world.cols - 2; x += 3){
       let free = true;
-      for (let dy = -8; dy <= 8 && free; dy += 8){
-        for (let dx = -8; dx <= 8; dx += 8){
-          if (isWallBlock(bx + (dx >> 3), by + (dy >> 3))){ free = false; break; }
-        }
+      for (const s of allSnakes()){
+        if (!s.alive || !s.snake.length) continue;
+        const h = s.snake[0];
+        let dx = Math.abs(h.x - x); dx = Math.min(dx, S.world.cols - dx);
+        let dy = Math.abs(h.y - y); dy = Math.min(dy, S.world.rows - dy);
+        if (dx < 15 && dy < 15){ free = false; break; }
       }
-      if (free) return { x: bx * MAP_BLOCK + 4, y: by * MAP_BLOCK + 4 };
+      if (free) return { x, y };
     }
   }
-  return { x: W >> 1, y: H >> 1 };
+  return { x: S.world.cols >> 1, y: S.world.rows >> 1 };
 }
 
 function respawnSnake(s){
@@ -449,7 +423,7 @@ function respawnSnake(s){
   s.dir = { x: 1, y: 0 };
   s.nextDir = null;
   s.alive = true;
-  s.score = 0;
+  s.score = START_LEN;   // score 语义=身长：与 snake.length 恒等
   s.respawnAt = 0;
   s.eatenTypes = [];
 }
@@ -470,8 +444,8 @@ function generateAllFood(){
     for (const p of s.snake) occupied.add(p.x + ',' + p.y);
   }
 
-  const cols = Math.ceil(W / FOOD_GRID);
-  const rows = Math.ceil(H / FOOD_GRID);
+  const cols = Math.ceil(S.world.cols / FOOD_GRID);
+  const rows = Math.ceil(S.world.rows / FOOD_GRID);
   const min = S.foodMin;
   const max = S.foodMax;
   const range = Math.max(1, max - min + 1);
@@ -485,7 +459,7 @@ function generateAllFood(){
         for (let attempt = 0; attempt < 8; attempt++){
           const x = cx * FOOD_GRID + Math.floor(rng() * FOOD_GRID);
           const y = cy * FOOD_GRID + Math.floor(rng() * FOOD_GRID);
-          if (x >= W || y >= H) continue;
+          if (x >= S.world.cols || y >= S.world.rows) continue;
           if (isWall(x, y)) continue;      // 墙里不放食物
           const key = x + ',' + y;
           if (S.game.foods.has(key)) continue;
@@ -519,8 +493,8 @@ function isOnSnake(x, y){
 
 function respawnFoodNear(cx, cy){
   for (let attempt = 0; attempt < 20; attempt++){
-    const x = clamp(cx + Math.floor(Math.random() * 11) - 5, 0, W - 1);
-    const y = clamp(cy + Math.floor(Math.random() * 11) - 5, 0, H - 1);
+    const x = clamp(cx + Math.floor(Math.random() * 11) - 5, 0, S.world.cols - 1);
+    const y = clamp(cy + Math.floor(Math.random() * 11) - 5, 0, S.world.rows - 1);
     if (isWall(x, y)) continue;         // 墙里不放食物
     const key = x + ',' + y;
     if (S.game.foods.has(key)) continue;
@@ -553,6 +527,7 @@ function createGame(seed){
     foodEv: { add: [], del: [] }, // 房主：待广播的食物增减
     initFoodCount: 0,
   };
+  S.game.player.sid = PLAYER_SID; // 固定且唯一（面板行 key）
   S.game.player.name = S.nick || '你';
   /* AI 蛇创建策略：
      - 房主/离线：创建真实 AI 并重生
@@ -688,16 +663,34 @@ function tick(){
   const dead = new Set();
   for (const s of allSnakes()){
     if (!s.alive) continue;
-    const nh = newHeads.get(s);
+    let nh = newHeads.get(s);
+    /* 神器·不死：仅房主端权威生效（成员端跟随快照）。
+       房主本人的不死由神器面板开关控制；成员被房主「赠送神器」后
+       （rs.gifted）同样获得不死之身，不受房主开关影响。 */
+    const im = !!S.world.artifact && S.role === 'host' &&
+      ((s.isPlayer && S.artifact.immortal) || !!s.gifted);
 
-    if (!inBounds(nh.x, nh.y)){ dead.add(s); continue; }
-    if (isWall(nh.x, nh.y)){ dead.add(s); continue; }   // 撞墙即死
+    /* 房主不死：撞墙自动向两边转向（沿边界滑行，不死） */
+    if (im && !inBounds(nh.x, nh.y)){
+      const turns = s.dir.x !== 0 ? [{ x: 0, y: 1 }, { x: 0, y: -1 }] : [{ x: 1, y: 0 }, { x: -1, y: 0 }];
+      let turned = false;
+      for (const d of turns){
+        const tx = s.snake[0].x + d.x, ty = s.snake[0].y + d.y;
+        if (inBounds(tx, ty)){ s.dir = d; nh = { x: tx, y: ty }; newHeads.set(s, nh); turned = true; break; }
+      }
+      if (!turned) nh = { x: s.snake[0].x, y: s.snake[0].y }; // 极端角落：原地踏步
+    }
 
-    /* 长度达到 SELF_IMMUNE_LEN 后获得"钢筋蛇身"：撞到自己不会死。
-       判定在房主端权威执行，成员端通过快照自动一致。 */
-    if (s.snake.length < SELF_IMMUNE_LEN){
-      for (let i = 1; i < s.snake.length; i++){
-        if (s.snake[i].x === nh.x && s.snake[i].y === nh.y){ dead.add(s); break; }
+    if (!im){
+      if (!inBounds(nh.x, nh.y)){ dead.add(s); continue; }
+      if (isWall(nh.x, nh.y)){ dead.add(s); continue; }   // 撞墙即死
+
+      /* 长度达到 SELF_IMMUNE_LEN 后获得"钢筋蛇身"：撞到自己不会死。
+         判定在房主端权威执行，成员端通过快照自动一致。 */
+      if (s.snake.length < SELF_IMMUNE_LEN){
+        for (let i = 1; i < s.snake.length; i++){
+          if (s.snake[i].x === nh.x && s.snake[i].y === nh.y){ dead.add(s); break; }
+        }
       }
     }
 
@@ -705,8 +698,8 @@ function tick(){
       if (o === s || !o.alive) continue;
       for (let i = 0; i < o.snake.length; i++){
         if (o.snake[i].x === nh.x && o.snake[i].y === nh.y){
-          dead.add(s);
-          if (i === 0) dead.add(o);
+          if (!im) dead.add(s);              // 房主不死：只死对方
+          if (im || i === 0) dead.add(o);    // 神器：撞成员成员死（含头对头同归）
           break;
         }
       }
@@ -721,7 +714,7 @@ function tick(){
     if (dead.has(s)){
       dropEatenFood(s);
       s.alive = false;
-      s.score = 0;
+      s.score = START_LEN;   // 死亡瞬间 score 归初始身长（面板/HUD 与长度一致）
       s.snake = [];
       s.respawnAt = now + RESPAWN_MS;
       continue;
@@ -751,6 +744,9 @@ function tick(){
 
   S.lastTickTime = now2;
 
+  /* 神器·吸附食物：房主蛇头 5×5 范围内的食物每 tick 飞向蛇头一步 */
+  artifactMagnet();
+
   /* 胜利判定：身长达到设定值即获胜（房主/单机权威判定，成员端由房主广播）。
      防止蛇无限增长占满地图。 */
   if (!S.winner && !(S.online && S.role === 'guest')){
@@ -763,8 +759,129 @@ function tick(){
     if (best){ triggerWin(best); return; } // 本 tick 已触发胜利，不再广播快照
   }
 
+  /* 竞赛模式：时间到 → 房主权威结算（本 tick 不再广播） */
+  if (S.comp.on && !S.comp.over && !S.winner && S.online && S.role === 'host'){
+    if (performance.now() >= S.comp.endAt){ endCompetition(); return; }
+  }
+
   // 房主：每 tick 向所有成员广播快照
   if (S.online && S.role === 'host') hostBroadcast();
+}
+
+/* =========================================================
+   神器（仅 1600×1600 房主有神器版地图，房主端权威）
+   ========================================================= */
+function hostImmortal(){
+  return !!S.world.artifact && S.role === 'host' && !!(S.game && S.game.player.alive) && S.artifact.immortal;
+}
+
+/* 吸附食物：范围 5×5，食物逐格飞向蛇头，飞到蛇头格即吃掉 */
+/* 神器·磁吸：蛇头 5×5 范围内的食物每 tick 飞向蛇头一步，碰到即吃掉。
+   目标 = 房主本人（神器面板开关控制）+ 被赠送神器的成员（常驻）。 */
+function artifactMagnet(){
+  if (!S.world.artifact || S.role !== 'host') return;
+  const g = S.game;
+  if (!g) return;
+  const targets = [];
+  const p = g.player;
+  if (p && p.alive && p.snake.length && S.artifact.magnet) targets.push(p);
+  for (const s of allSnakes()){
+    if (s === p) continue;
+    if (s.gifted && s.alive && s.snake.length) targets.push(s);
+  }
+  for (const t of targets) magnetFor(t);
+}
+
+function magnetFor(p){
+  const g = S.game;
+  const h = p.snake[0];
+  const movers = [];
+  for (let dy = -2; dy <= 2; dy++){
+    for (let dx = -2; dx <= 2; dx++){
+      if (dx === 0 && dy === 0) continue;
+      const f = g.foods.get((h.x + dx) + ',' + (h.y + dy));
+      if (f) movers.push(f);
+    }
+  }
+  for (const f of movers){
+    const nx = f.x + Math.sign(h.x - f.x);
+    const ny = f.y + Math.sign(h.y - f.y);
+    const fx = f.x + ',' + f.y;
+    if (nx === h.x && ny === h.y){
+      // 飞到蛇头格：直接吃掉（score 与长度必须同步 +1，否则「积分和长度不一样」）
+      g.foods.delete(fx); removeFoodFromBucket(f); g.foodById.delete(f.id);
+      g.foodEv.del.push(f.id);
+      p.score++; p.eatenTypes.push(f.e);
+      // 本 tick 身体已更新完，直接在尾部补一节（等效于吃到食物不缩尾）
+      const tail = p.snake[p.snake.length - 1];
+      if (tail) p.snake.push({ x: tail.x, y: tail.y });
+      continue;
+    }
+    const nk = nx + ',' + ny;
+    if (g.foods.has(nk)) continue; // 目标被占用则原地不动
+    g.foods.delete(fx); removeFoodFromBucket(f);
+    f.x = nx; f.y = ny;
+    g.foods.set(nk, f); addFoodToBucket(f);
+    g.foodEv.del.push(f.id);
+    g.foodEv.add.push([f.id, f.x, f.y, f.e]);
+  }
+}
+
+/* 神器·加长：蛇身 +n 格。
+   头保持不动（杜绝"蛇头瞬间前移 100 格冲刺突破地图"），
+   新节从尾部沿尾部当前走向继续向后延伸；
+   整条蛇（旧身+新节）的包围盒必须留在地图内：
+   - 右/下越界 → 地图向两边扩展（cols/rows 各 +50）
+   - 左/上越界 → 整条蛇平移让出空间（平移后另一侧越界则再扩界）
+   联机时新尺寸经快照 world 字段同步给成员。 */
+function artifactExtend(n){
+  if (!S.world.artifact || S.role !== 'host' || !S.game) return;
+  const p = S.game.player;
+  if (!p.alive || !p.snake.length) return;
+  const body = p.snake;
+  const tail = body[body.length - 1];
+  const prev = body.length > 1 ? body[body.length - 2] : null;
+  // 尾部走向：上一节 → 末节 的方向（蛇前进时尾巴正扫过的方向）
+  let tx = prev ? Math.sign(tail.x - prev.x) : -p.dir.x;
+  let ty = prev ? Math.sign(tail.y - prev.y) : -p.dir.y;
+  if (tx === 0 && ty === 0){ tx = -p.dir.x; ty = -p.dir.y; }
+  // 新节：从末节继续向后
+  const add = [];
+  let x = tail.x, y = tail.y;
+  for (let i = 0; i < n; i++){
+    x += tx; y += ty;
+    add.push({ x, y });
+  }
+  // 旧身 + 新节的包围盒
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of body){
+    if (s.x < minX) minX = s.x; if (s.x > maxX) maxX = s.x;
+    if (s.y < minY) minY = s.y; if (s.y > maxY) maxY = s.y;
+  }
+  for (const s of add){
+    if (s.x < minX) minX = s.x; if (s.x > maxX) maxX = s.x;
+    if (s.y < minY) minY = s.y; if (s.y > maxY) maxY = s.y;
+  }
+  // 左/上越界：整体平移（留 2 格余量）
+  const offX = minX < 0 ? -minX + 2 : 0;
+  const offY = minY < 0 ? -minY + 2 : 0;
+  if (offX || offY){
+    for (const s of body){ s.x += offX; s.y += offY; }
+    for (const s of add){ s.x += offX; s.y += offY; }
+    minX += offX; maxX += offX; minY += offY; maxY += offY;
+  }
+  // 右/下越界：地图向两边扩展
+  const needCols = maxX >= S.world.cols ? maxX + 1 : 0;
+  const needRows = maxY >= S.world.rows ? maxY + 1 : 0;
+  if (needCols || needRows){
+    S.world.cols = Math.max(S.world.cols, needCols) + 50;
+    S.world.rows = Math.max(S.world.rows, needRows) + 50;
+    S.camInit = false;
+    toast('🗺 地图已向两边扩展为 ' + S.world.cols + '×' + S.world.rows);
+  }
+  for (const s of add) body.push(s);
+  // 同步插值基线：加长是瞬间完成的，不做补间
+  p.prevSnake = body.map(s => ({ x: s.x, y: s.y }));
 }
 
 /* ---------- 胜利 ---------- */
@@ -775,12 +892,140 @@ function triggerWin(s){
     len: s.snake.length,
     isPlayer: !!s.isPlayer,
   };
+  // 皇冠累计：该蛇本局夺冠次数 +1（继续模式下不清零，重开新局才清零）
+  s.crowns = (s.crowns || 0) + 1;
   if (S.tickTimer){ clearInterval(S.tickTimer); S.tickTimer = null; }
   if (S.online && S.role === 'host'){
-    Net.broadcast({ t: 'win', name: S.winner.name, len: S.winner.len, color: S.winner.color });
+    Net.broadcast({ t: 'win', name: S.winner.name, len: S.winner.len, color: S.winner.color, crowns: s.crowns });
   }
   showWinOverlay();
   toast('🏆 ' + S.winner.name + ' 身长达到 ' + S.winner.len + '，获得胜利！');
+}
+
+/* ---------- 胜利后「继续」：不清场，夺冠蛇重置长度，累计皇冠 ---------- */
+function continueGame(){
+  if (!S.winner) return;
+  S.winner = null;
+  S.continued = true;
+  document.getElementById('winOverlay').classList.remove('show');
+  // 已达胜利长度的蛇重置为初始长度（分数清零，皇冠保留）
+  for (const s of allSnakes()){
+    if (s.alive && s.snake.length >= S.winLen) respawnSnake(s);
+  }
+  if (!(S.online && S.role === 'guest')){
+    if (S.tickTimer) clearInterval(S.tickTimer);
+    S.tickTimer = setInterval(tick, TICK_MS);
+  }
+  if (S.online && S.role === 'host') Net.broadcast({ t: 'continue' });
+  toast('👑 继续！已夺冠的蛇已重置长度，冲向下一顶皇冠');
+}
+
+/* =========================================================
+   竞赛模式（仅房主在联机大厅配置）：
+   - 房主进游戏时开始倒计时，并向全员广播剩余秒数（不做时钟同步，
+     成员以收到时刻为基准本地倒计时，局域网误差可忽略）
+   - 时间到：房主权威结算，按身长排名，全员显示排名界面
+   ========================================================= */
+const COMP_MINUTES = [5, 10, 15, 20, 30, 60];
+
+/* 从联机大厅读取竞赛配置（建房入口调用） */
+function readCompSetting(){
+  const onEl = document.getElementById('compOn');
+  const minEl = document.getElementById('compMinutes');
+  S.comp.on = !!(onEl && onEl.checked);
+  S.comp.minutes = clamp(parseInt(minEl && minEl.value, 10) || 10, 1, 180);
+  S.comp.endAt = 0;
+  S.comp.over = false;
+}
+
+/* 房主：进入游戏时启动竞赛计时并广播 */
+function startCompetition(){
+  if (!S.comp.on) return;
+  S.comp.over = false;
+  S.comp.endAt = performance.now() + S.comp.minutes * 60000;
+  document.getElementById('compOverlay').classList.remove('show');
+  if (S.online && S.role === 'host'){
+    Net.broadcast({ t: 'comp', on: true, secs: Math.round(S.comp.minutes * 60) });
+  }
+  toast(`🏁 竞赛模式开始：${S.comp.minutes} 分钟，时间到按身长排名`);
+}
+
+/* 房主：时间到，权威结算并广播排名 */
+function endCompetition(){
+  if (!S.comp.on || S.comp.over) return;
+  S.comp.over = true;
+  if (S.tickTimer){ clearInterval(S.tickTimer); S.tickTimer = null; }
+  const ranks = allSnakes()
+    .filter(s => s.alive)
+    .sort((a, b) => b.score - a.score || b.snake.length - a.snake.length)
+    .map(s => ({
+      name: s.isPlayer ? (S.nick || '你') : (s.name || 'AI'),
+      color: s.color,
+      score: s.score,
+      isPlayer: !!s.isPlayer,
+      isHost: !!s.isHost,
+      memberNo: (typeof s.memberNo === 'number') ? s.memberNo : null,
+    }));
+  if (S.online && S.role === 'host') Net.broadcast({ t: 'compEnd', ranks });
+  showCompOverlay(ranks);
+  toast('🏁 竞赛结束！');
+}
+
+function showCompOverlay(ranks){
+  const ov = document.getElementById('compOverlay');
+  const box = document.getElementById('compRanks');
+  if (!ov || !box) return;
+  const rows = (ranks || []).map((r, i) => {
+    const tag = r.isPlayer ? '（你）' : (r.isHost ? ' · 房主' : (r.memberNo ? ' · 成员' + r.memberNo : ''));
+    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1) + '.';
+    return `<div class="comp-rank-row">
+      <span class="cr-medal">${medal}</span>
+      <span class="cr-dot" style="background:${r.color}"></span>
+      <span class="cr-name">${escapeHtml(r.name)}${tag}</span>
+      <span class="cr-score">${r.score}</span>
+    </div>`;
+  }).join('');
+  box.innerHTML = rows || '<div class="comp-empty">没有存活玩家</div>';
+  ov.classList.add('show');
+}
+
+function hideCompOverlay(){
+  const ov = document.getElementById('compOverlay');
+  if (ov) ov.classList.remove('show');
+}
+
+/* 成员：房主开/关竞赛（含重新开始时的重播） */
+function applyComp(msg){
+  if (msg && msg.on && typeof msg.secs === 'number' && msg.secs > 0){
+    S.comp.on = true;
+    S.comp.over = false;
+    S.comp.endAt = performance.now() + msg.secs * 1000;
+    S.comp.minutes = Math.max(1, Math.round(msg.secs / 60));
+    hideCompOverlay();
+    toast(`🏁 竞赛模式开始：${S.comp.minutes} 分钟`);
+  } else {
+    S.comp.on = false;
+  }
+}
+
+/* 成员：房主广播的最终排名 */
+function applyCompEnd(msg){
+  S.comp.over = true;
+  showCompOverlay((msg && msg.ranks) || []);
+}
+
+/* HUD 倒计时（updateUI 每帧调用） */
+function refreshCompTimer(){
+  const el = document.getElementById('hudCompTimer');
+  if (!el) return;
+  if (S.comp.on && !S.comp.over){
+    const remain = Math.max(0, (S.comp.endAt - performance.now()) / 1000);
+    const mm = Math.floor(remain / 60), ss = Math.floor(remain % 60);
+    el.textContent = '⏱ ' + mm + ':' + String(ss).padStart(2, '0');
+    el.hidden = false;
+  } else {
+    el.hidden = true;
+  }
 }
 
 function showWinOverlay(){
@@ -798,9 +1043,18 @@ function applyWin(msg){
     color: msg.color || '#ffd93d',
     len: msg.len || 0,
     isPlayer: false,
+    crowns: msg.crowns || 0,
   };
   showWinOverlay();
   toast('🏆 ' + S.winner.name + ' 获得胜利！');
+}
+
+/* 成员：房主点了「继续」——本地同步（房主权威模拟，快照会重置夺冠蛇长度） */
+function applyContinue(){
+  S.winner = null;
+  S.continued = true;
+  document.getElementById('winOverlay').classList.remove('show');
+  toast('👑 房主选择了继续，冲下一顶皇冠！');
 }
 
 /* =========================================================
@@ -827,9 +1081,9 @@ function updateCamera(){
   const p = S.game.player;
   if (!p.snake.length) return;
   const h = p.snake[0];
-  const worldW = W * CELL, worldH = H * CELL;
-  const tx = clamp(h.x * CELL + CELL / 2 - canvas.width / 2, 0, Math.max(0, worldW - canvas.width));
-  const ty = clamp(h.y * CELL + CELL / 2 - canvas.height / 2, 0, Math.max(0, worldH - canvas.height));
+  const worldWpx = S.world.cols * CELL, worldHpx = S.world.rows * CELL;
+  const tx = clamp(h.x * CELL + CELL / 2 - canvas.width / 2, 0, Math.max(0, worldWpx - canvas.width));
+  const ty = clamp(h.y * CELL + CELL / 2 - canvas.height / 2, 0, Math.max(0, worldHpx - canvas.height));
   if (!S.camInit){ S.camX = tx; S.camY = ty; S.camInit = true; }
   else {
     S.camX += (tx - S.camX) * 0.22;
@@ -922,13 +1176,13 @@ function drawSnake(s, t){
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = 'rgba(255,255,255,0.95)';
-    ctx.fillText('你', hx, hy - CELL * 0.8);
-  } else if (s.name && s.name !== 'AI'){
+    ctx.fillText(snakeLabel(s), hx, hy - CELL * 0.8);
+  } else if (s.isRemote && s.name && s.name !== 'AI'){
     ctx.font = 'bold 10px system-ui,sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = 'rgba(255,255,255,0.72)';
-    ctx.fillText(s.name, hx, hy - CELL * 0.8);
+    ctx.fillText(snakeLabel(s), hx, hy - CELL * 0.8);
   }
 }
 
@@ -954,52 +1208,20 @@ function draw(now){
   ctx.beginPath();
   const step = 4;
   for (let x = Math.max(0, Math.ceil(x0 / step) * step); x <= x1; x += step){
-    if (x < 0 || x > W) continue;
+    if (x < 0 || x > S.world.cols) continue;
     ctx.moveTo(x * CELL + .5, Math.max(0, y0 * CELL));
-    ctx.lineTo(x * CELL + .5, Math.min(H * CELL, y1 * CELL));
+    ctx.lineTo(x * CELL + .5, Math.min(S.world.rows * CELL, y1 * CELL));
   }
   for (let y = Math.max(0, Math.ceil(y0 / step) * step); y <= y1; y += step){
-    if (y < 0 || y > H) continue;
+    if (y < 0 || y > S.world.rows) continue;
     ctx.moveTo(Math.max(0, x0 * CELL), y * CELL + .5);
-    ctx.lineTo(Math.min(W * CELL, x1 * CELL), y * CELL + .5);
+    ctx.lineTo(Math.min(S.world.cols * CELL, x1 * CELL), y * CELL + .5);
   }
   ctx.stroke();
 
   ctx.strokeStyle = 'rgba(120,170,255,0.55)';
   ctx.lineWidth = 4;
-  ctx.strokeRect(0, 0, W * CELL, H * CELL);
-
-  /* 墙体（自定义地图）：按块绘制，仅绘制可视范围内的块 */
-  if (S.mapList.length){
-    const bs = MAP_BLOCK * CELL;
-    ctx.fillStyle = '#18233f';
-    const b0x = Math.max(0, x0 >> 3), b1x = Math.min(MAP_COLS - 1, x1 >> 3);
-    const b0y = Math.max(0, y0 >> 3), b1y = Math.min(MAP_ROWS - 1, y1 >> 3);
-    for (let by = b0y; by <= b1y; by++){
-      const row = by * MAP_COLS;
-      for (let bx = b0x; bx <= b1x; bx++){
-        if (S.mapGrid[row + bx]){
-          ctx.fillRect(bx * bs, by * bs, bs, bs);
-        }
-      }
-    }
-    ctx.strokeStyle = 'rgba(96,140,210,0.35)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let by = b0y; by <= b1y; by++){
-      const row = by * MAP_COLS;
-      for (let bx = b0x; bx <= b1x; bx++){
-        if (!S.mapGrid[row + bx]) continue;
-        // 只描边朝向空块的边，减少描边数量
-        const x = bx * bs, y = by * bs;
-        if (!isWallBlock(bx, by - 1)){ ctx.moveTo(x, y + .5); ctx.lineTo(x + bs, y + .5); }
-        if (!isWallBlock(bx, by + 1)){ ctx.moveTo(x, y + bs - .5); ctx.lineTo(x + bs, y + bs - .5); }
-        if (!isWallBlock(bx - 1, by)){ ctx.moveTo(x + .5, y); ctx.lineTo(x + .5, y + bs); }
-        if (!isWallBlock(bx + 1, by)){ ctx.moveTo(x + bs - .5, y); ctx.lineTo(x + bs - .5, y + bs); }
-      }
-    }
-    ctx.stroke();
-  }
+  ctx.strokeRect(0, 0, S.world.cols * CELL, S.world.rows * CELL);
 
   ctx.font = Math.round(CELL * 0.86) + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
   ctx.textAlign = 'center';
@@ -1047,10 +1269,7 @@ function drawMinimap(){
   roundRect(mx + .5, my + .5, size - 1, size - 1, 10); ctx.stroke();
 
   if (!S.game) return;
-  const k = size / Math.max(W, H);
-
-  // 墙体（预渲染缓存，帧内只贴图）
-  if (minimapWallCache) ctx.drawImage(minimapWallCache, mx, my);
+  const k = size / Math.max(S.world.cols, S.world.rows);
 
   ctx.strokeStyle = 'rgba(255,255,255,0.28)';
   ctx.lineWidth = 1;
@@ -1098,10 +1317,13 @@ function renderLoop(now){
   requestAnimationFrame(renderLoop);
 }
 
+/* 玩家面板行缓存：sid -> { row, scoreEl, sig }（按 sid 复用 DOM，见 updateUI） */
+const panelRowMap = new Map();
+let panelOrderSig = ''; // 当前行的排序签名（变化时才移动行）
+
 function updateUI(){
   if (!S.game) return;
   const p = S.game.player;
-  document.getElementById('hudScore').textContent = p.score;
   const lenEl = document.getElementById('hudLength');
   lenEl.textContent = p.alive ? p.snake.length : 0;
   // 钢筋蛇身状态：HUD 长度变金 + 首次达成提示一次
@@ -1121,16 +1343,77 @@ function updateUI(){
   document.getElementById('hudRank').textContent = p.alive ? rank : '-';
   document.getElementById('hudTotal').textContent = alive.length;
 
+  /* 玩家面板：按 sid 复用行 DOM，绝不每帧 innerHTML 重建。
+     每帧重建会销毁按钮——mousedown 后到 mouseup 前元素已被替换，
+     click 事件不触发，表现为「管理点不动」。 */
   const panel = document.getElementById('playersPanel');
-  const list = allSnakes().filter(s => s.alive || s.isPlayer);
+  const list = allSnakes().filter(s => s.alive || s.isPlayer || s.isRemote);
   const sorted2 = [...list].sort((a, b) => b.score - a.score);
-  panel.innerHTML = sorted2.map(s => `
-    <div class="pp-row ${s.isPlayer ? 'me' : ''} ${s.alive ? '' : 'dead'}">
-      <span class="pp-dot" style="background:${s.color}"></span>
-      <span class="pp-nick">${escapeHtml(s.isPlayer ? '你' : (s.name || 'AI'))}</span>
-      <span class="pp-score">${s.score}</span>
-    </div>
-  `).join('');
+  const seenIds = new Set();
+  const seenMids = new Set();
+  for (const s of sorted2){
+    seenIds.add(s.sid);
+    const mid = s.memberNo || s.sid;
+    const isHostView = S.online && S.role === 'host';
+    const canManage = isHostView && s.isRemote && !s.isHost;
+    if (canManage) seenMids.add(mid);
+    /* 行结构签名：只在这些属性变化时才重建行内容 */
+    const rowSig = [
+      s.isPlayer ? 1 : 0, s.isRemote ? 1 : 0, s.isHost ? 1 : 0,
+      s.alive ? 1 : 0, s.crowns || 0, canManage ? 1 : 0,
+      s.color, snakeLabel(s),
+    ].join('|');
+    let rec = panelRowMap.get(s.sid);
+    const isNewRow = !rec;
+    if (!rec){
+      rec = { row: document.createElement('div'), scoreEl: null, sig: '' };
+      panelRowMap.set(s.sid, rec);
+    }
+    if (rec.sig !== rowSig){
+      rec.sig = rowSig;
+      const name = escapeHtml(snakeLabel(s));
+      const crown = (s.crowns || 0) > 0
+        ? `<span class="pp-crown" title="本局累计夺冠 ${s.crowns} 次">👑${s.crowns}</span>` : '';
+      /* 管理按钮：菜单本体是 fixed 浮动元素（见 openManageMenu）——
+         行内 absolute 菜单会被面板 overflow-y:auto 裁掉（底部成员
+         点开只看到半截，「没有黑屏按键」就是这么来的） */
+      const mgr = canManage
+        ? `<button class="pp-manage" data-mid="${mid}" title="管理该成员">管理</button>`
+        : '';
+      rec.row.className = `pp-row ${s.isPlayer ? 'me' : ''} ${s.alive ? '' : 'dead'}`;
+      rec.row.dataset.sid = s.sid; // hover 详情委托靠它定位行（sid 不变，设一次即可）
+      rec.row.innerHTML = `
+        <span class="pp-dot" style="background:${s.color}"></span>
+        <span class="pp-nick">${name}</span>
+        ${crown}
+        <span class="pp-score"></span>
+        ${mgr}`;
+      rec.scoreEl = rec.row.querySelector('.pp-score');
+    }
+    /* 分数高频变化：只更新文本，不动 DOM 结构 */
+    if (rec.scoreEl) rec.scoreEl.textContent = s.score;
+    if (isNewRow) panel.appendChild(rec.row); // 新行立即入列
+  }
+  /* 排序变化时才移动行；菜单打开/hover 详情期间冻结（移动行会中断进行中的点击）。
+     已存在的节点仅调整顺序，不重建。 */
+  if (S.manageOpen === null && hoverSid === null){
+    const orderSig = sorted2.map(s => s.sid).join(',');
+    if (orderSig !== panelOrderSig){
+      panelOrderSig = orderSig;
+      for (const s of sorted2) panel.appendChild(panelRowMap.get(s.sid).row);
+    }
+  }
+  // 移除离场玩家的行
+  for (const [sid, rec] of Array.from(panelRowMap)){
+    if (!seenIds.has(sid)){
+      if (hoverSid === sid) hideRowDetail();
+      if (manageMenuRow === rec.row) hideManageMenu();
+      if (rec.row.remove) rec.row.remove();
+      panelRowMap.delete(sid);
+    }
+  }
+  // 管理菜单指向的成员已离场：收起菜单
+  if (S.manageOpen !== null && !seenMids.has(S.manageOpen)) hideManageMenu();
 
   // 联机状态
   const hudOnline = document.getElementById('hudOnline');
@@ -1153,7 +1436,299 @@ function updateUI(){
     document.getElementById('respawnCount').textContent = remain.toFixed(1);
     ov.classList.add('show');
   }
+
+  updateSnakeInfo();
+  refreshRowDetail();
+  refreshManageMenu();
+  refreshCompTimer();
 }
+
+/* =========================================================
+   鼠标靠近某条蛇：屏幕左侧弹出该蛇信息卡
+   （靠近 = 蛇头 8 格内，或身体抽样 8 格内；pointer-events 穿透不挡操作）
+   ========================================================= */
+let infoSid = null;
+let infoStatusEl = null;
+function updateSnakeInfo(){
+  const box = document.getElementById('snakeInfo');
+  if (!box) return;
+  let target = null;
+  if (S.game && S.mouse.over && S.screen === 'game'){
+    const wx = (S.camX + S.mouse.x) / CELL;
+    const wy = (S.camY + S.mouse.y) / CELL;
+    let bestD2 = 8 * 8;
+    for (const s of allSnakes()){
+      if (!s.alive || !s.snake.length) continue;
+      const h = s.snake[0];
+      const d2 = (h.x - wx) * (h.x - wx) + (h.y - wy) * (h.y - wy);
+      if (d2 < bestD2){ bestD2 = d2; target = s; continue; }
+      // 头部不够近时抽样扫身体（每 4 节取 1），长蛇开销可控
+      for (let i = 4; i < s.snake.length; i += 4){
+        const b = s.snake[i];
+        const b2 = (b.x - wx) * (b.x - wx) + (b.y - wy) * (b.y - wy);
+        if (b2 < bestD2){ bestD2 = b2; target = s; break; }
+      }
+    }
+  }
+  if (!target){
+    if (infoSid !== null){ infoSid = null; infoStatusEl = null; box.classList.remove('show'); }
+    return;
+  }
+  if (infoSid !== target.sid){
+    infoSid = target.sid;
+    box.innerHTML = `
+      <div class="si-head">
+        <span class="si-dot" style="background:${target.color}"></span>
+        <span class="si-name">${escapeHtml(snakeLabel(target))}</span>
+      </div>
+      <div class="si-grid">
+        <span>得分</span><b>${target.score}</b>
+        <span>长度</span><b>${target.alive ? target.snake.length : 0}</b>
+        <span>状态</span><b class="si-status">存活</b>
+        ${(target.crowns || 0) > 0 ? `<span>皇冠</span><b>👑${target.crowns}</b>` : ''}
+      </div>`;
+    infoStatusEl = box.querySelector('.si-status');
+  }
+  // 重生倒计时需要逐帧刷新
+  if (!target.alive && infoStatusEl){
+    infoStatusEl.textContent = '重生中 ' + Math.max(0, (target.respawnAt - performance.now()) / 1000).toFixed(1) + 's';
+  } else if (target.alive && infoStatusEl){
+    infoStatusEl.textContent = '存活';
+  }
+  box.classList.add('show');
+}
+
+/* =========================================================
+   玩家面板 hover 详情：鼠标靠近（悬停）某个成员行，
+   在该行左侧弹出完整信息卡（面板 overflow-y:auto 会裁行内卡片，
+   故用 fixed 独立元素 + getBoundingClientRect 定位到行旁）
+   ========================================================= */
+let hoverSid = null;
+let hoverDetailEl = null;
+let hoverScoreEl = null, hoverLenEl = null, hoverStatusEl = null;
+let hoverRowEl = null;
+let hoverSig = '';
+
+function getDetailBox(){
+  if (!hoverDetailEl){
+    hoverDetailEl = document.createElement('div');
+    hoverDetailEl.className = 'pp-detail';
+    document.body.appendChild(hoverDetailEl);
+  }
+  return hoverDetailEl;
+}
+
+function showRowDetail(sid){
+  const id = Number(sid);
+  if (!Number.isFinite(id)) return;
+  const rec = panelRowMap.get(id);
+  if (!rec || !rec.row) return;
+  const s = allSnakes().find(x => x.sid === id);
+  if (!s){ hideRowDetail(); return; }
+  hoverSid = id;
+  hoverRowEl = rec.row;
+  const box = getDetailBox();
+  /* 结构签名变化才重建内容（皇冠数/昵称/身份变色时） */
+  const sig = [id, s.crowns || 0, snakeLabel(s), s.color].join('|');
+  if (hoverSig !== sig){
+    hoverSig = sig;
+    const name = escapeHtml(snakeLabel(s));
+    const crown = (s.crowns || 0) > 0
+      ? `<span>皇冠</span><b>👑${s.crowns}</b>` : '';
+    box.innerHTML = `
+      <div class="pd-head">
+        <span class="pd-dot" style="background:${s.color}"></span>
+        <span class="pd-name">${name}</span>
+      </div>
+      <div class="pd-grid">
+        <span>得分</span><b class="pd-score"></b>
+        <span>长度</span><b class="pd-len"></b>
+        <span>状态</span><b class="pd-status"></b>
+        ${crown}
+      </div>`;
+    hoverScoreEl = box.querySelector('.pd-score');
+    hoverLenEl = box.querySelector('.pd-len');
+    hoverStatusEl = box.querySelector('.pd-status');
+  }
+  box.classList.add('show');
+  refreshRowDetail();
+}
+
+function hideRowDetail(){
+  hoverSid = null;
+  hoverRowEl = null;
+  hoverSig = '';
+  if (hoverDetailEl){
+    hoverDetailEl.classList.remove('show');
+    hoverDetailEl.dataset.sid = '';
+  }
+}
+
+function refreshRowDetail(){
+  if (hoverSid === null || !hoverDetailEl) return;
+  const s = allSnakes().find(x => x.sid === hoverSid);
+  if (!s){ hideRowDetail(); return; }
+  if (hoverScoreEl) hoverScoreEl.textContent = s.score;
+  if (hoverLenEl) hoverLenEl.textContent = s.alive ? s.snake.length : 0;
+  if (hoverStatusEl){
+    hoverStatusEl.textContent = s.alive
+      ? '存活'
+      : '重生中 ' + Math.max(0, (s.respawnAt - performance.now()) / 1000).toFixed(1) + 's';
+  }
+  /* 位置跟随行（fixed 用视口坐标；排序变化/面板滚动每帧校正） */
+  if (hoverRowEl && hoverRowEl.getBoundingClientRect){
+    const r = hoverRowEl.getBoundingClientRect();
+    if (!r.height && !r.width){ hideRowDetail(); return; } // 行已不可见（离场/画面切换）
+    hoverDetailEl.style.right = (window.innerWidth - r.left + 10) + 'px';
+    hoverDetailEl.style.top = (r.top + r.height / 2) + 'px';
+  }
+}
+
+/* =========================================================
+   房主管理菜单：fixed 浮动元素（挂在 body 下）
+   行内 absolute 菜单会被 .players-panel 的 overflow-y:auto 裁剪——
+   底部成员行点「管理」只露出半截甚至整体在可视区外，
+   表现为「打不开 / 没有黑屏按键」。fixed + 每帧定位到行旁解决。
+   ========================================================= */
+let manageMenuEl = null;
+let manageMenuRow = null; // 定位基准行（行被移除/离场时收起）
+
+function getManageMenu(){
+  if (!manageMenuEl){
+    manageMenuEl = document.createElement('div');
+    manageMenuEl.className = 'pp-menu-float';
+    manageMenuEl.innerHTML = `
+      <button class="pp-menu-item" data-act="reset">🔄 重置</button>
+      <button class="pp-menu-item" data-act="black">🌑 黑屏</button>
+      <button class="pp-menu-item danger" data-act="kick">⛔ 踢出</button>
+      <button class="pp-menu-item gift" data-act="gift">🎁 赠送神器</button>`;
+    document.body.appendChild(manageMenuEl);
+    manageMenuEl.addEventListener('click', e => {
+      const item = e.target && e.target.closest ? e.target.closest('.pp-menu-item') : null;
+      if (!item) return;
+      const mid = +item.dataset.mid;
+      const act = item.dataset.act;
+      hideManageMenu();
+      if (Number.isFinite(mid) && act) manageMember(mid, act);
+    });
+  }
+  return manageMenuEl;
+}
+
+function openManageMenu(mid, row){
+  S.manageOpen = mid;
+  manageMenuRow = row || null;
+  const box = getManageMenu();
+  const items = box.querySelectorAll('.pp-menu-item');
+  for (let i = 0; i < items.length; i++) items[i].dataset.mid = mid;
+  /* 赠送/收回文案随该成员当前状态切换 */
+  const rs = S.netPeers.get(mid);
+  const giftBtn = items[items.length - 1];
+  if (giftBtn) giftBtn.textContent = (rs && rs.gifted) ? '💫 收回神器' : '🎁 赠送神器';
+  box.classList.add('show');
+  refreshManageMenu();
+}
+
+function hideManageMenu(){
+  S.manageOpen = null;
+  manageMenuRow = null;
+  if (manageMenuEl) manageMenuEl.classList.remove('show');
+}
+
+function refreshManageMenu(){
+  if (S.manageOpen === null || !manageMenuEl || !manageMenuRow) return;
+  const r = manageMenuRow.getBoundingClientRect ? manageMenuRow.getBoundingClientRect() : null;
+  if (!r || (!r.height && !r.width)){ hideManageMenu(); return; } // 行已离场不可见
+  const h = manageMenuEl.offsetHeight || 104;
+  manageMenuEl.style.right = (window.innerWidth - r.right + 6) + 'px';
+  if (r.bottom + h + 12 <= window.innerHeight){
+    manageMenuEl.style.top = (r.bottom + 4) + 'px';   // 默认下弹
+    manageMenuEl.style.bottom = 'auto';
+  } else {
+    manageMenuEl.style.top = 'auto';                  // 贴近屏幕底部：改为上弹
+    manageMenuEl.style.bottom = (window.innerHeight - r.top + 4) + 'px';
+  }
+}
+
+/* =========================================================
+   房主管理成员：重置 / 黑屏（开关式）/ 踢出
+   ========================================================= */
+function manageMember(peerId, act){
+  if (S.role !== 'host' || !S.online) return;
+  const rs = S.netPeers.get(peerId);
+  if (act === 'reset'){
+    if (rs && S.game){
+      respawnSnake(rs);   // 权威端直接重生，下一 tick 快照同步到该成员
+      toast(`已将 成员${peerId} 的蛇重置重生`);
+    }
+  } else if (act === 'black'){
+    if (rs){
+      rs.blackout = !rs.blackout;
+      Net.sendToPeer(peerId, { t: 'blackout', on: !!rs.blackout });
+      toast(rs.blackout ? `成员${peerId} 已被黑屏` : `成员${peerId} 黑屏已恢复`);
+    }
+  } else if (act === 'kick'){
+    if (rs){
+      Net.sendToPeer(peerId, { t: 'kicked' });
+      Net.closePeer(peerId);   // P2P：关 DataChannel；服务器模式：服务器断开该成员
+      toast(`成员${peerId} 已被踢出`);
+    }
+  } else if (act === 'gift'){
+    /* 赠送神器：该成员获得不死之身 + 磁吸食物（不受房主神器开关影响） */
+    if (rs){
+      rs.gifted = !rs.gifted;
+      Net.sendToPeer(peerId, { t: 'gift', on: !!rs.gifted });
+      toast(rs.gifted
+        ? `🎁 成员${peerId} 获得神器：不死之身 + 磁吸食物`
+        : `已收回 成员${peerId} 的神器`);
+    }
+  }
+  hideManageMenu();
+}
+
+/* 玩家面板事件委托（面板每帧重建，菜单开合状态存 S.manageOpen） */
+const playersPanelEl = document.getElementById('playersPanel');
+playersPanelEl.addEventListener('click', e => {
+  const btn = e.target.closest('.pp-manage');
+  if (btn){
+    const mid = +btn.dataset.mid;
+    if (S.manageOpen === mid){
+      hideManageMenu();
+    } else {
+      openManageMenu(mid, btn.closest('.pp-row'));
+    }
+    return;
+  }
+  /* 点行空白处：触屏设备上切换该成员详情卡（桌面由 hover 触发） */
+  const row = e.target.closest('.pp-row');
+  if (row && playersPanelEl.contains(row)){
+    const id = Number(row.dataset.sid);
+    if (hoverSid === id) hideRowDetail(); else showRowDetail(id);
+  }
+  if (S.manageOpen !== null) hideManageMenu(); // 点了别处：收起管理菜单
+});
+
+/* 点面板/菜单之外的区域也收起管理菜单（fixed 菜单挂在 body 下） */
+document.addEventListener('click', e => {
+  if (S.manageOpen === null) return;
+  const t = e.target;
+  if (t && t.closest && (t.closest('.pp-manage') || t.closest('.pp-menu-float'))) return;
+  hideManageMenu();
+});
+
+/* hover 详情（事件委托：行按 sid 复用，监听器不丢） */
+playersPanelEl.addEventListener('mouseover', e => {
+  const row = e.target && e.target.closest ? e.target.closest('.pp-row') : null;
+  if (!row || !playersPanelEl.contains(row)) return;
+  showRowDetail(row.dataset.sid);
+});
+playersPanelEl.addEventListener('mouseout', e => {
+  const row = e.target && e.target.closest ? e.target.closest('.pp-row') : null;
+  if (!row) return;
+  const to = e.relatedTarget;
+  if (to && row.contains(to)) return; // 行内子元素间移动不收起
+  hideRowDetail();
+});
 
 /* =========================================================
    食物密度设置 UI
@@ -1211,29 +1786,16 @@ document.getElementById('btnResetSetting').addEventListener('click', () => {
 });
 
 /* ---------- 胜利长度设置 UI ---------- */
-const winLenInput = document.getElementById('winLen');
 const winLenValueEl = document.getElementById('winLenValue');
 
+/* 胜利长度随地图像素自动设定，此处只读刷新 */
 function refreshWinLenUI(){
-  winLenInput.value = S.winLen;
   winLenValueEl.textContent = S.winLen;
   const extra = document.getElementById('settingSummaryWin');
   if (extra) extra.innerHTML = `胜利长度 <b>${S.winLen}</b>（身长达到即胜利）`;
+  const hint = document.getElementById('mapWinHint');
+  if (hint) hint.textContent = '胜利长度 ' + S.winLen;
 }
-winLenInput.addEventListener('input', () => {
-  let v = parseInt(winLenInput.value, 10);
-  if (!Number.isFinite(v)) return;
-  S.winLen = clamp(v, WIN_LEN_MIN, WIN_LEN_MAX);
-  refreshWinLenUI();
-  saveWinLen();
-});
-winLenInput.addEventListener('change', () => {
-  // 失焦时把越界值规范化
-  S.winLen = clamp(S.winLen, WIN_LEN_MIN, WIN_LEN_MAX);
-  refreshWinLenUI();
-  saveWinLen();
-  toast('胜利长度已设为 ' + S.winLen);
-});
 
 /* =========================================================
    游戏控制
@@ -1243,6 +1805,9 @@ function startGame(){
   S.pendingWelcome = false;
   document.getElementById('winOverlay').classList.remove('show');
   if (!S.game) createGame();
+  // 新对局：快照世界尺寸基线复位（加长扩界才会重发）
+  S.snapWorldCols = S.world.cols;
+  S.snapWorldRows = S.world.rows;
   resizeCanvas();
   showScreen('game');
   S.paused = false;
@@ -1251,6 +1816,10 @@ function startGame(){
   document.getElementById('hudFoodRange').textContent = `${S.foodMin}~${S.foodMax}`;
   document.getElementById('hudWinTarget').textContent = '/' + S.winLen;
   if (S.online) S.enteredGame = true;
+  refreshPauseBtn();
+  refreshMapUI();
+  // 竞赛模式：房主端开始计时并广播（成员端由 applyComp 同步）
+  if (S.online && S.role === 'host') startCompetition();
 
   if (S.tickTimer) clearInterval(S.tickTimer);
   // 成员端不跑本地模拟（权威在房主），只接收快照渲染
@@ -1279,12 +1848,9 @@ function backToMenu(){
 
 function togglePause(){
   if (!S.game || S.winner) return;
+  // 成员端无暂停权限（按钮已隐藏，P/空格同样不响应）
+  if (S.online && S.role === 'guest') return;
   if (S.online){
-    if (S.role === 'guest'){
-      // 成员端：向房主发送暂停/恢复请求，由房主权威决定并广播给全员
-      Net.sendToHost({ t: 'pause' });
-      return;
-    }
     setPaused(!S.paused);
     Net.broadcast({ t: 'pause', on: S.paused });
     return;
@@ -1356,6 +1922,15 @@ canvas.addEventListener('touchend', e => {
   else sendDir(dy > 0 ? 'down' : 'up');
 }, { passive: true });
 
+/* 鼠标位置：靠近蛇身时左侧弹信息卡（canvas 样式尺寸与像素 1:1，无需缩放） */
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  S.mouse.x = e.clientX - r.left;
+  S.mouse.y = e.clientY - r.top;
+  S.mouse.over = true;
+});
+canvas.addEventListener('mouseleave', () => { S.mouse.over = false; });
+
 /* =========================================================
    UI 事件
    ========================================================= */
@@ -1411,7 +1986,27 @@ document.getElementById('btnWinRestart').addEventListener('click', () => {
   }
   startGame();
 });
+/* 胜利后「继续」：不清场，夺冠蛇重置长度，累计皇冠（房主/单机权威） */
+document.getElementById('btnWinContinue').addEventListener('click', () => {
+  if (S.online && S.role === 'guest'){
+    Net.sendToHost({ t: 'continue' });
+    toast('已请求房主继续…');
+    return;
+  }
+  continueGame();
+});
 document.getElementById('btnWinMenu').addEventListener('click', backToMenu);
+
+/* 竞赛结算按钮 */
+document.getElementById('btnCompRestart').addEventListener('click', () => {
+  if (S.online){
+    if (S.role === 'host'){ hostRestart(); startGame(); }
+    else toast('只有房主可以重新开始');
+    return;
+  }
+  startGame();
+});
+document.getElementById('btnCompMenu').addEventListener('click', backToMenu);
 
 /* ---------- 手机端：虚拟方向键 ---------- */
 const dpad = document.getElementById('dpad');
@@ -1441,6 +2036,7 @@ function spawnRemoteSnake(peerId, name, color){
   rs.isRemote = true;
   rs.name = name;
   rs.sid = 5000 + peerId;
+  rs.memberNo = peerId;   // 玩家列表显示「昵称 · 成员N」
   respawnSnake(rs);
   return rs;
 }
@@ -1450,13 +2046,20 @@ function hostBroadcast(){
   const g = S.game;
   if (!g) return;
   const ev = { add: g.foodEv.add, del: g.foodEv.del };
+  // 世界尺寸（加长扩界时同步；尺寸未变时发 null 省流量）
+  const world = (S.world.cols !== S.snapWorldCols || S.world.rows !== S.snapWorldRows)
+    ? { cols: S.world.cols, rows: S.world.rows }
+    : null;
+  if (world){ S.snapWorldCols = S.world.cols; S.snapWorldRows = S.world.rows; }
   S.netPeers.forEach((rs, id) => {
-    // 成员自己的蛇：完整身体 + 朝向 + 状态
+    // 成员自己的蛇：完整身体 + 朝向 + 状态 + 皇冠数 + 是否被赠送神器
     const me = {
       body: packBody(rs),
       dir: rs.dir,
       alive: rs.alive,
       score: rs.score,
+      crowns: rs.crowns || 0,
+      gift: !!rs.gifted,
       respawnIn: rs.alive ? 0 : Math.max(0, Math.round(rs.respawnAt - performance.now())),
     };
     // 其他蛇：全部发送完整身体（不再按距离过滤）。
@@ -1465,7 +2068,16 @@ function hostBroadcast(){
     const others = [];
     for (const s of allSnakes()){
       if (s === rs) continue;
-      const o = { id: s.sid, name: s.name || '', color: s.color, alive: s.alive, score: s.score };
+      const o = {
+        // 房主蛇发 HOST_SNAP_SID：成员端自己的 player 也是 PLAYER_SID，
+        // 若把房主 sid 原样发过去，成员端面板两行撞 key，房主行被覆盖
+        id: s.isPlayer ? HOST_SNAP_SID : s.sid,
+        name: s.name || '', color: s.color,
+        alive: s.alive, score: s.score, crowns: s.crowns || 0,
+        host: !!s.isPlayer,
+        gift: !!s.gifted, // 被房主赠送神器（其他成员可见标识）
+        memberNo: (typeof s.memberNo === 'number') ? s.memberNo : null,
+      };
       if (s.alive && s.snake.length){
         const h = s.snake[0];
         o.hx = h.x; o.hy = h.y; o.dir = s.dir;
@@ -1473,7 +2085,7 @@ function hostBroadcast(){
       }
       others.push(o);
     }
-    Net.sendToPeer(id, { t: 'snap', me, others, ev });
+    Net.sendToPeer(id, { t: 'snap', me, others, ev, world });
   });
   g.foodEv.add.length = 0;
   g.foodEv.del.length = 0;
@@ -1511,11 +2123,21 @@ function applySnap(msg){
   if (!g) return;
   const p = g.player;
 
+  /* 房主加长扩界：同步世界尺寸（成员端只渲染，边界裁剪/相机要用） */
+  if (msg.world && typeof msg.world.cols === 'number'
+      && (msg.world.cols !== S.world.cols || msg.world.rows !== S.world.rows)){
+    S.world.cols = msg.world.cols;
+    S.world.rows = msg.world.rows;
+    S.camInit = false;
+  }
+
   p.prevSnake = p.snake;
   p.snake = unpackBody(msg.me.body || []);
   if (msg.me.dir) p.dir = msg.me.dir;
   p.alive = msg.me.alive;
   p.score = msg.me.score || 0;
+  p.crowns = msg.me.crowns || 0;
+  p.gifted = !!msg.me.gift; // 房主赠送的神器（不死+磁吸）
   if (!p.alive) p.respawnAt = performance.now() + (msg.me.respawnIn || 0);
 
   const seen = new Set();
@@ -1534,6 +2156,10 @@ function applySnap(msg){
     s.color = o.color;
     s.alive = o.alive;
     s.score = o.score || 0;
+    s.crowns = o.crowns || 0;
+    s.isHost = !!o.host;
+    s.gifted = !!o.gift;
+    if (typeof o.memberNo === 'number') s.memberNo = o.memberNo;
     if (o.alive && o.body){
       s.prevSnake = s.snake;
       s.snake = unpackBody(o.body);
@@ -1567,13 +2193,27 @@ function onWelcome(msg){
   if (typeof msg.ai === 'number') S.aiCount = msg.ai;
   if (typeof msg.winLen === 'number' && msg.winLen >= WIN_LEN_MIN) S.winLen = clamp(Math.round(msg.winLen), WIN_LEN_MIN, WIN_LEN_MAX);
   if (typeof msg.room === 'string') S.roomNo = msg.room;
-  // 房主的地图必须先应用：createGame 里的出生避让/食物生成都依赖墙体
-  if (Array.isArray(msg.map)) applyMapList(msg.map);
+  // 竞赛模式：房主进行中的剩余秒数（成员以收到时刻为基准本地倒计时）
+  if (msg.comp && typeof msg.comp.secs === 'number' && msg.comp.secs > 0){
+    S.comp.on = true;
+    S.comp.over = false;
+    S.comp.minutes = Math.max(1, Math.round(msg.comp.secs / 60));
+    S.comp.endAt = performance.now() + msg.comp.secs * 1000;
+  } else {
+    S.comp.on = false;
+  }
+  // 房主的地图尺寸必须先应用：createGame 的出生避让/食物生成都依赖世界大小
+  if (msg.world && typeof msg.world.cols === 'number'){
+    S.world = { cols: msg.world.cols, rows: msg.world.rows, artifact: !!msg.world.artifact };
+    S.mapSizeIdx = MAP_SIZES.findIndex(m => m.cols === msg.world.cols && m.rows === msg.world.rows && !!m.artifact === !!msg.world.artifact);
+    if (S.mapSizeIdx < 0) S.mapSizeIdx = DEFAULT_MAP_IDX;
+  }
   createGame(msg.seed);            // 同一 seed → 与房主完全相同的食物图
   foodId = msg.foodId || 0;        // 对齐房主计数器，之后新食物 id 由快照驱动
   applyFoodDelta(null, msg.eaten); // 剔除房主已吃掉的初始食物
   setPaused(false);                // 新对局以房主当前状态为准
   applyHostAway(false);
+  S.continued = false;             // 新对局皇冠重新累计
 
   /* 是否立即进房：
      - 从未进过游戏（首次加入）→ 进
@@ -1597,13 +2237,27 @@ function onWelcome(msg){
 function hostRestart(){
   if (S.role !== 'host'){ toast('只有房主可以重新开始'); return; }
   S.winner = null;
+  S.continued = false;
   document.getElementById('winOverlay').classList.remove('show');
+  hideCompOverlay();
   rebuildWorld();
+  // 竞赛模式：重新开始 = 新一轮计时
+  if (S.comp.on && S.online){
+    S.comp.over = false;
+    S.comp.endAt = performance.now() + S.comp.minutes * 60000;
+    Net.broadcast({ t: 'comp', on: true, secs: Math.round(S.comp.minutes * 60) });
+  }
   // 复位暂停与暂离状态
   setPaused(false);
   Net.broadcast({ t: 'pause', on: false });
   Net.broadcast({ t: 'hostAway', on: false });
   toast('已重新开始，新种子已同步');
+}
+
+/* 竞赛剩余秒数（welcome 用；未开启返回 null） */
+function compSecsLeft(){
+  if (!S.comp.on) return null;
+  return Math.max(0, Math.round((S.comp.endAt - performance.now()) / 1000));
 }
 
 /* ---------- 房主：重建世界（新种子），保留已连接成员 ---------- */
@@ -1617,8 +2271,11 @@ function rebuildWorld(){
     S.game.remotes.push(rs);
     Net.sendToPeer(id, {
       t: 'welcome', seed: S.seed, foodId: foodId, ai: S.aiCount,
-      winLen: S.winLen, room: S.roomNo, map: S.mapList,
-      win: S.winner ? { name: S.winner.name, len: S.winner.len, color: S.winner.color } : null,
+      winLen: S.winLen, room: S.roomNo,
+      comp: (() => { const s = compSecsLeft(); return s !== null ? { secs: s } : null; })(),
+      world: { cols: S.world.cols, rows: S.world.rows, artifact: S.world.artifact },
+      artifact: { immortal: S.artifact.immortal, magnet: S.artifact.magnet },
+      win: S.winner ? { name: S.winner.name, len: S.winner.len, color: S.winner.color, crowns: S.winner.crowns } : null,
     });
   }
 }
@@ -1639,9 +2296,12 @@ function resendWelcomeTo(peerId){
   if (!S.game) return;
   Net.sendToPeer(peerId, {
     t: 'welcome', seed: S.seed, foodId: foodId, ai: S.aiCount,
-    winLen: S.winLen, room: S.roomNo, map: S.mapList,
+    winLen: S.winLen, room: S.roomNo,
+    comp: (() => { const s = compSecsLeft(); return s !== null ? { secs: s } : null; })(),
+    world: { cols: S.world.cols, rows: S.world.rows, artifact: S.world.artifact },
+    artifact: { immortal: S.artifact.immortal, magnet: S.artifact.magnet },
     eaten: currentEatenIds(),
-    win: S.winner ? { name: S.winner.name, len: S.winner.len, color: S.winner.color } : null,
+    win: S.winner ? { name: S.winner.name, len: S.winner.len, color: S.winner.color, crowns: S.winner.crowns } : null,
   });
 }
 
@@ -1658,10 +2318,15 @@ function leaveOnline(){
   S.rejoining = false;
   S.pendingWelcome = false;
   S.winner = null;
+  S.continued = false;
   S.roomNo = '';
+  S.blackout = false;
+  const bo = document.getElementById('blackOverlay');
+  if (bo) bo.classList.remove('show');
   document.getElementById('awayOverlay').classList.remove('show');
   document.getElementById('winOverlay').classList.remove('show');
   stopGame();
+  refreshPauseBtn();
   showScreen('menu');
 }
 
@@ -1672,14 +2337,18 @@ Net.on.peerOpen = (peerId) => {
   const color = pickGuestColor(peerId);
   S.peerMeta.set(peerId, { name, color });
   const rs = spawnRemoteSnake(peerId, name, color);
+  rs.memberNo = peerId;   // 玩家列表显示「昵称 · 成员N」
   S.netPeers.set(peerId, rs);
   S.game.remotes.push(rs);   // 必须登记：allSnakes() 靠它遍历，否则房主不推进成员蛇
-  // 欢迎包：种子 + 食物计数器 + 已被吃掉的初始食物 id + 胜利长度 + 房间号 + 地图
+  // 欢迎包：种子 + 食物计数器 + 已被吃掉的初始食物 id + 胜利长度 + 房间号 + 世界尺寸/神器
   Net.sendToPeer(peerId, {
     t: 'welcome', seed: S.seed, foodId: foodId, ai: S.aiCount,
-    winLen: S.winLen, room: S.roomNo, map: S.mapList,
+    winLen: S.winLen, room: S.roomNo,
+    comp: (() => { const s = compSecsLeft(); return s !== null ? { secs: s } : null; })(),
+    world: { cols: S.world.cols, rows: S.world.rows, artifact: S.world.artifact },
+    artifact: { immortal: S.artifact.immortal, magnet: S.artifact.magnet },
     eaten: currentEatenIds(),
-    win: S.winner ? { name: S.winner.name, len: S.winner.len, color: S.winner.color } : null,
+    win: S.winner ? { name: S.winner.name, len: S.winner.len, color: S.winner.color, crowns: S.winner.crowns } : null,
   });
   toast(`成员${peerId} 已接入房间`);
 };
@@ -1762,6 +2431,9 @@ Net.on.message = (peerId, msg) => {
         // 房主也暂离中：等房主自己返回，hostRestart 时会广播
         Net.sendToPeer(peerId, { t: 'wait' });
       }
+    } else if (msg.t === 'continue'){
+      // 成员请求「继续」：房主权威执行并广播全员
+      if (S.winner) continueGame();
     }
   } else if (S.role === 'guest'){
     if (msg.t === 'welcome') onWelcome(msg);
@@ -1769,9 +2441,36 @@ Net.on.message = (peerId, msg) => {
     else if (msg.t === 'pause') applyPause(msg.on);
     else if (msg.t === 'hostAway') applyHostAway(msg.on);
     else if (msg.t === 'win') applyWin(msg);
+    else if (msg.t === 'continue') applyContinue();
+    else if (msg.t === 'blackout') applyBlackout(msg.on);
+    else if (msg.t === 'kicked') applyKicked();
+    else if (msg.t === 'gift') applyGift(msg.on);
+    else if (msg.t === 'comp') applyComp(msg);
+    else if (msg.t === 'compEnd') applyCompEnd(msg);
     else if (msg.t === 'wait') toast('房主也暂时离开了，等他返回游戏你会自动进房');
   }
 };
+
+/* 成员：收到房主的神器赠送/收回 */
+function applyGift(on){
+  if (S.game) S.game.player.gifted = !!on;
+  if (on) toast('🎁 你获得了房主赠送的神器：不死之身 + 磁吸食物！');
+  else toast('房主收回了你的神器');
+}
+
+/* ---------- 成员：被房主黑屏（开关式，房主可随时恢复） ---------- */
+function applyBlackout(on){
+  S.blackout = !!on;
+  const ov = document.getElementById('blackOverlay');
+  if (ov) ov.classList.toggle('show', S.blackout);
+  if (S.blackout) toast('你已被房主黑屏');
+}
+
+/* ---------- 成员：被房主踢出房间 ---------- */
+function applyKicked(){
+  toast('你已被房主踢出房间');
+  leaveOnline();
+}
 
 /* ---------- 成员：应用暂停状态 ---------- */
 function applyPause(on){
@@ -1825,6 +2524,7 @@ document.getElementById('btnCreateRoom').addEventListener('click', async () => {
   const firstTime = !S.online || S.role !== 'host';
   S.online = true;
   S.role = 'host';
+  readCompSetting(); // 竞赛模式配置（仅房主大厅可设）
   const want = Math.max(0, Math.min(AI_COUNT, parseInt(document.getElementById('aiCount').value, 10) || 0));
   // 首次建房、或修改了 AI 数量：重建世界（保留已连接成员并通知同步）
   if (firstTime || !S.game || S.game.ai.length !== want){
@@ -1855,6 +2555,7 @@ document.getElementById('btnAcceptAnswer').addEventListener('click', async () =>
 });
 document.getElementById('btnHostStart').addEventListener('click', () => {
   if (!S.game) createGame();
+  readCompSetting(); // 房主可能建房后调整过竞赛配置，进游戏时以最新为准
   startGame();
 });
 document.getElementById('btnJoinRoom').addEventListener('click', async () => {
@@ -1906,6 +2607,7 @@ document.getElementById('btnServerCreate').addEventListener('click', async () =>
 
   const addr = document.getElementById('serverHost').value;
   S.online = true; S.role = 'host'; S.serverMode = true;
+  readCompSetting(); // 竞赛模式配置（仅房主大厅可设）
   try {
     await Net.connectServer(addr);
   } catch (e) {
@@ -1994,223 +2696,71 @@ document.getElementById('btnLeaveRoom').addEventListener('click', leaveOnline);
 addEventListener('beforeunload', () => { Net.closeAll(); });
 
 /* =========================================================
-   地图编辑器（自定义地图）
-   ---------------------------------------------------------
-   200×200 块（每块 8×8 格）；画笔/橡皮/矩形 + 5 种预设；
-   保存写入 localStorage 并立即生效；联机时随房主欢迎包同步。
+   地图选择 + 神器面板 UI
    ========================================================= */
-const mapCanvas = document.getElementById('mapCanvas');
-const mctx = mapCanvas.getContext('2d');
-const MAP_CV = 400; // 内部分辨率：200 块 × 2px
-const ed = { tool: 'brush', painting: false, rectStart: null, rectCur: null, grid: null };
+function refreshMapUI(){
+  const sel = document.getElementById('mapSize');
+  if (sel) sel.value = String(S.mapSizeIdx);
+  const size = MAP_SIZES[S.mapSizeIdx];
+  const nameEl = document.getElementById('mapName');
+  if (nameEl) nameEl.textContent = size.cols + '×' + size.rows + (size.artifact ? '（房主有神器）' : '');
+  // 神器按钮仅神器版地图 + 房主身份显示
+  const artBtn = document.getElementById('btnArtifact');
+  if (artBtn) artBtn.hidden = !(S.world.artifact && S.role === 'host');
+  const artPanel = document.getElementById('artifactPanel');
+  if (artPanel && (!S.world.artifact || S.role !== 'host')) artPanel.classList.remove('show');
+  refreshArtifactUI();
+}
 
-function edCount(){
-  let n = 0;
-  for (let i = 0; i < ed.grid.length; i++) if (ed.grid[i]) n++;
-  return n;
+function refreshArtifactUI(){
+  document.querySelectorAll('.art-switch').forEach(el => {
+    const on = !!S.artifact[el.dataset.art];
+    el.classList.toggle('on', on);
+    el.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
 }
-function edDraw(){
-  mctx.fillStyle = '#0a0f1e';
-  mctx.fillRect(0, 0, MAP_CV, MAP_CV);
-  mctx.strokeStyle = 'rgba(90,130,200,0.12)';
-  mctx.lineWidth = 1;
-  mctx.beginPath();
-  for (let i = 0; i <= 200; i += 10){
-    mctx.moveTo(i * 2 + .5, 0); mctx.lineTo(i * 2 + .5, MAP_CV);
-    mctx.moveTo(0, i * 2 + .5); mctx.lineTo(MAP_CV, i * 2 + .5);
-  }
-  mctx.stroke();
-  mctx.fillStyle = '#3ecf8e';
-  for (let idx = 0; idx < ed.grid.length; idx++){
-    if (!ed.grid[idx]) continue;
-    const bx = idx % MAP_COLS, by = (idx / MAP_COLS) | 0;
-    mctx.fillRect(bx * 2, by * 2, 2, 2);
-  }
-  if (ed.rectStart && ed.rectCur){
-    const x0 = Math.min(ed.rectStart.x, ed.rectCur.x) * 2;
-    const y0 = Math.min(ed.rectStart.y, ed.rectCur.y) * 2;
-    const w = (Math.abs(ed.rectCur.x - ed.rectStart.x) + 1) * 2;
-    const h = (Math.abs(ed.rectCur.y - ed.rectStart.y) + 1) * 2;
-    mctx.strokeStyle = '#ffd93d';
-    mctx.lineWidth = 1.5;
-    mctx.strokeRect(x0 + .5, y0 + .5, w - 1, h - 1);
-  }
-  const cnt = document.getElementById('mapBlockCount');
-  if (cnt) cnt.textContent = edCount() + ' 块';
-}
-function edBlockFromEvent(e){
-  const r = mapCanvas.getBoundingClientRect();
-  const bx = Math.floor((e.clientX - r.left) / r.width * MAP_COLS);
-  const by = Math.floor((e.clientY - r.top) / r.height * MAP_ROWS);
-  return { x: clamp(bx, 0, MAP_COLS - 1), y: clamp(by, 0, MAP_ROWS - 1) };
-}
-function edSet(bx, by, v){ ed.grid[by * MAP_COLS + bx] = v ? 1 : 0; }
 
-mapCanvas.addEventListener('pointerdown', e => {
-  e.preventDefault();
-  mapCanvas.setPointerCapture(e.pointerId);
-  const b = edBlockFromEvent(e);
-  if (ed.tool === 'brush'){ ed.painting = true; edSet(b.x, b.y, 1); edDraw(); }
-  else if (ed.tool === 'eraser'){ ed.painting = true; edSet(b.x, b.y, 0); edDraw(); }
-  else if (ed.tool === 'rect'){ ed.rectStart = b; ed.rectCur = b; edDraw(); }
+/* 地图尺寸选择（联机中仅房主可改；改尺寸=重开对局） */
+document.getElementById('mapSize').addEventListener('change', e => {
+  if (S.online && S.role !== 'host'){ toast('联机中只有房主可以改地图'); refreshMapUI(); return; }
+  setMapSize(+e.target.value);
+  const size = MAP_SIZES[S.mapSizeIdx];
+  toast('地图已选 ' + size.cols + '×' + size.rows + '，胜利长度 ' + size.win);
+  if (S.online && S.role === 'host' && S.game){
+    // 房主改地图：重开对局并同步（世界尺寸/胜利长度随欢迎包下发）
+    hostRestart();
+  }
 });
-mapCanvas.addEventListener('pointermove', e => {
-  if (!ed.painting && !ed.rectStart) return;
-  e.preventDefault();
-  const b = edBlockFromEvent(e);
-  if (ed.painting){ edSet(b.x, b.y, ed.tool === 'brush' ? 1 : 0); edDraw(); }
-  else { ed.rectCur = b; edDraw(); }
-});
-function edPointerUp(){
-  if (ed.rectStart && ed.rectCur){
-    const x0 = Math.min(ed.rectStart.x, ed.rectCur.x), x1 = Math.max(ed.rectStart.x, ed.rectCur.x);
-    const y0 = Math.min(ed.rectStart.y, ed.rectCur.y), y1 = Math.max(ed.rectStart.y, ed.rectCur.y);
-    for (let by = y0; by <= y1; by++) for (let bx = x0; bx <= x1; bx++) edSet(bx, by, 1);
-    ed.rectStart = null; ed.rectCur = null; edDraw();
-  }
-  ed.painting = false;
-}
-mapCanvas.addEventListener('pointerup', edPointerUp);
-mapCanvas.addEventListener('pointercancel', edPointerUp);
-mapCanvas.addEventListener('contextmenu', e => e.preventDefault());
 
-/* 预设地图 */
-function edPreset(name){
-  ed.grid.fill(0);
-  if (name === 'border'){
-    for (let i = 0; i < 200; i++){
-      for (let t = 0; t < 3; t++){
-        ed.grid[i * MAP_COLS + t] = 1;
-        ed.grid[i * MAP_COLS + (199 - t)] = 1;
-        ed.grid[t * MAP_COLS + i] = 1;
-        ed.grid[(199 - t) * MAP_COLS + i] = 1;
-      }
-    }
-  } else if (name === 'maze'){
-    // 每 4 块一道墙、随机开缺口（棋盘式迷宫）
-    for (let i = 0; i < 200; i += 4){
-      for (let j = 0; j < 200; j++){
-        if (Math.random() >= 0.74) continue;
-        ed.grid[i * MAP_COLS + j] = 1;
-        ed.grid[j * MAP_COLS + i] = 1;
-      }
-    }
-  } else if (name === 'random'){
-    for (let n = 0; n < 240; n++){
-      const bx = 2 + Math.floor(Math.random() * 196);
-      const by = 2 + Math.floor(Math.random() * 196);
-      const w = 1 + Math.floor(Math.random() * 4);
-      const h = 1 + Math.floor(Math.random() * 4);
-      for (let y = by; y < Math.min(200, by + h); y++){
-        for (let x = bx; x < Math.min(200, bx + w); x++) ed.grid[y * MAP_COLS + x] = 1;
-      }
-    }
-  } else if (name === 'cross'){
-    // 中心十字：把地图分成四个竞技场
-    const c = 100, arm = 9;
-    for (let i = 0; i < 200; i++){
-      for (let t = -arm; t <= arm; t++){
-        const y1 = c + t, x1 = c + t;
-        if (y1 >= 0 && y1 < 200) ed.grid[y1 * MAP_COLS + i] = 1;
-        if (x1 >= 0 && x1 < 200) ed.grid[i * MAP_COLS + x1] = 1;
-      }
-    }
-  }
-  edDraw();
-}
-function edCollect(){
-  const list = [];
-  for (let idx = 0; idx < ed.grid.length; idx++) if (ed.grid[idx]) list.push(idx);
-  return list;
-}
-function edOverLimit(){
-  const n = edCount();
-  if (n > MAP_MAX_BLOCKS){
-    toast('墙体 ' + n + ' 块，超过上限 ' + MAP_MAX_BLOCKS + '（联机同步需要），请减少');
-    return true;
-  }
-  return false;
-}
-
-function openMapEditor(){
-  ed.grid = Uint8Array.from(S.mapGrid); // 从当前地图继续编辑
-  ed.tool = 'brush'; ed.painting = false; ed.rectStart = null; ed.rectCur = null;
-  document.querySelectorAll('.editor-tools .tool').forEach(b =>
-    b.classList.toggle('active', b.dataset.tool === 'brush'));
-  const box = document.getElementById('mapCodeBox');
-  box.hidden = true; box.value = '';
-  edDraw();
-  showScreen('editor');
-}
-document.getElementById('btnMapEdit').addEventListener('click', openMapEditor);
-document.getElementById('btnEditorBack').addEventListener('click', () => showScreen('menu'));
-document.getElementById('btnMapReset').addEventListener('click', () => {
-  applyMapList([]);
-  saveMapSetting();
-  toast('已恢复默认地图（无墙体）');
+/* 神器面板开关 */
+document.getElementById('btnArtifact').addEventListener('click', () => {
+  if (!S.world.artifact || S.role !== 'host') return;
+  document.getElementById('artifactPanel').classList.toggle('show');
 });
-document.querySelectorAll('.editor-tools .tool').forEach(b => {
-  b.addEventListener('click', () => {
-    ed.tool = b.dataset.tool;
-    document.querySelectorAll('.editor-tools .tool').forEach(x => x.classList.toggle('active', x === b));
+document.querySelectorAll('.art-switch').forEach(el => {
+  el.addEventListener('click', () => {
+    if (!S.world.artifact || S.role !== 'host') return;
+    const k = el.dataset.art;
+    S.artifact[k] = !S.artifact[k];
+    refreshArtifactUI();
+    // 神器状态变化同步给成员（成员端仅展示用，权威在房主）
+    Net.broadcast({ t: 'artifact', immortal: S.artifact.immortal, magnet: S.artifact.magnet });
+    toast((k === 'immortal' ? '房主不死' : '吸附食物') + (S.artifact[k] ? '已开启' : '已关闭'));
   });
 });
-document.querySelectorAll('.editor-presets [data-preset]').forEach(b => {
-  b.addEventListener('click', () => edPreset(b.dataset.preset));
+document.getElementById('btnArtExtend').addEventListener('click', () => {
+  if (!S.world.artifact || S.role !== 'host') return;
+  artifactExtend(100);
+  toast('🐍 房主已加长 100 格（当前 ' + S.game.player.snake.length + '）');
 });
-/* 保存并使用 */
-document.getElementById('btnMapSave').addEventListener('click', () => {
-  if (edOverLimit()) return;
-  applyMapList(edCollect());
-  saveMapSetting();
-  if (S.online && S.role === 'host'){
-    toast('地图已保存，点「重新开始」后同步给成员');
-  } else {
-    toast('地图已保存并使用');
-  }
-  showScreen('menu');
-});
-/* 试玩（联机中禁止：会与其他成员世界不一致） */
-document.getElementById('btnMapPlay').addEventListener('click', () => {
-  if (edOverLimit()) return;
-  if (S.online){ toast('联机中不能试玩，请先用离线模式验证地图'); return; }
-  applyMapList(edCollect());
-  saveMapSetting();
-  showScreen('menu');
-  createGame();
-  startGame();
-});
-/* 导出地图码 */
-document.getElementById('btnMapExport').addEventListener('click', async () => {
-  const box = document.getElementById('mapCodeBox');
-  box.hidden = false;
-  box.value = '生成中…';
-  const code = await encodeMapCode(edCollect());
-  box.value = code;
-  toast('地图码已生成（' + code.length + ' 字符），复制发给好友');
-});
-/* 导入地图码（首次点击显示输入框，再次点击执行导入） */
-document.getElementById('btnMapImport').addEventListener('click', async () => {
-  const box = document.getElementById('mapCodeBox');
-  if (box.hidden){
-    box.hidden = false;
-    box.value = '';
-    box.placeholder = '粘贴好友给的「地图码」，然后再次点击「导入地图码」';
-    toast('请先粘贴地图码，再点一次「导入地图码」');
-    return;
-  }
-  try {
-    const arr = await decodeMapCode(box.value);
-    ed.grid.fill(0);
-    for (const idx of arr){
-      if (Number.isInteger(idx) && idx >= 0 && idx < ed.grid.length) ed.grid[idx] = 1;
-    }
-    edDraw();
-    toast('地图码已导入编辑器，记得点「保存并使用」');
-  } catch (e) {
-    toast(e.message);
-  }
-});
+
+/* 成员端隐藏暂停按钮（房主端保留；P/空格同样不响应） */
+function refreshPauseBtn(){
+  const btn = document.getElementById('btnPause');
+  if (btn) btn.hidden = !!(S.online && S.role === 'guest');
+}
+refreshPauseBtn();
+
 
 /* =========================================================
    启动
@@ -2224,11 +2774,10 @@ document.getElementById('btnMapImport').addEventListener('click', async () => {
   }
   // 加载食物密度设置
   loadFoodSetting();
-  // 加载胜利长度设置
-  loadWinLen();
-  // 加载自定义地图
-  loadMapSetting();
+  // 加载地图尺寸选择（胜利长度由地图自动决定，不再读旧存档）
+  loadMapSize();
   refreshSettingUI();
+  refreshMapUI();
 
   /* ---- 本地服务器模式预热 ---- */
   // 页面由 1.exe 提供时：预填服务器地址（ws 同源直连）

@@ -226,7 +226,7 @@ input::placeholder{color:#4d6284}
 .win-target{color:#5f78a0;font-size:11px;margin-left:1px;font-variant-numeric:tabular-nums}
 
 .players-panel{
-  position:absolute;right:18px;top:64px;width:176px;
+  position:absolute;right:18px;top:64px;width:224px;
   background:rgba(12,20,36,.82);border:1px solid rgba(96,140,210,.2);
   border-radius:14px;padding:10px;backdrop-filter:blur(8px);
   display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto;z-index:5;
@@ -380,39 +380,6 @@ input::placeholder{color:#4d6284}
 }
 
 /* =========================================================
-   6. 地图编辑器
-   ========================================================= */
-.editor-wrap{flex:1;min-height:0;padding:22px;gap:14px;overflow-y:auto;align-items:center;width:100%}
-.editor-wrap > *{width:100%;max-width:560px}
-.editor-card{display:flex;flex-direction:column;gap:12px;padding:18px}
-.editor-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.tool{
-  padding:9px 14px;border-radius:10px;font-size:13px;font-weight:700;
-  background:rgba(96,140,210,.1);border:1px solid rgba(96,140,210,.25);color:#9fb6d8;
-  transition:.15s;
-}
-.tool:hover{background:rgba(96,140,210,.18);color:#e8eefc}
-.tool.active{background:linear-gradient(135deg,#3ecf8e,#2aa9e0);color:#04121a;border-color:transparent}
-.editor-count{
-  margin-left:auto;font-size:12px;font-weight:700;color:#ffd93d;
-  font-variant-numeric:tabular-nums;
-}
-.map-canvas-wrap{display:flex;justify-content:center}
-#mapCanvas{
-  width:100%;max-width:440px;aspect-ratio:1/1;border-radius:12px;
-  border:1px solid rgba(96,140,210,.25);background:#0a0f1e;
-  image-rendering:pixelated;touch-action:none;cursor:crosshair;
-}
-.editor-presets{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.editor-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-.editor-actions .btn{width:100%;padding:12px 6px;font-size:13px}
-#mapCodeBox{
-  width:100%;padding:10px 12px;border-radius:10px;font-size:11px;line-height:1.5;
-  background:rgba(10,16,28,.9);border:1px solid rgba(96,140,210,.25);color:#9fb6d8;
-  font-family:ui-monospace,Consolas,monospace;resize:vertical;word-break:break-all;outline:none;
-}
-
-/* =========================================================
    5. 手机端适配
    ========================================================= */
 @media(max-width:640px){
@@ -432,7 +399,7 @@ input::placeholder{color:#4d6284}
   .hud-right{gap:6px}
   .hud-right .btn{padding:10px 13px;font-size:13px;min-height:40px}
   .players-panel{
-    width:124px;top:56px;right:10px;padding:7px;
+    width:156px;top:56px;right:10px;padding:7px;
     max-height:30vh;border-radius:10px;
   }
   .pp-row{font-size:11px;padding:3px 5px}
@@ -445,13 +412,6 @@ input::placeholder{color:#4d6284}
   .ai-row select{padding:12px}
   .server-share input[type=text]{font-size:11px}
 
-  /* 地图编辑器 */
-  .editor-wrap{padding:12px}
-  .editor-card{padding:13px;gap:10px}
-  .tool{padding:11px 13px}
-  .editor-actions{grid-template-columns:repeat(2,1fr)}
-  .editor-actions .btn{min-height:44px;font-size:13px}
-  #mapCodeBox{font-size:10px}
 
   .toast{bottom:22px;font-size:13px;padding:10px 16px;max-width:88vw;text-align:center}
   .respawn-box .msg,.pause-box .msg{font-size:16px;letter-spacing:1px}
@@ -462,4 +422,175 @@ input::placeholder{color:#4d6284}
 @media(max-height:460px){
   .dpad{grid-template-columns:repeat(3,46px);grid-template-rows:repeat(3,46px);left:10px;bottom:10px}
   .players-panel{max-height:44vh}
+}
+/* =========================================================
+   7. 玩家列表：皇冠 / 管理按钮 / 管理菜单
+   ========================================================= */
+.pp-crown{
+  flex:0 0 auto;font-size:12px;color:#ffd93d;font-weight:700;
+  font-variant-numeric:tabular-nums;cursor:default;user-select:none;
+}
+.pp-manage{
+  flex:0 0 auto;padding:2px 10px;border-radius:8px;font-size:11px;font-weight:700;
+  background:rgba(96,140,210,.14);border:1px solid rgba(96,140,210,.3);color:#9fb6d8;
+  cursor:pointer;transition:.15s;
+}
+.pp-manage:hover{background:rgba(96,140,210,.26);color:#e8eefc}
+.pp-row{position:relative}
+/* 管理菜单：fixed 浮动元素（挂在 body 下，避开面板 overflow-y:auto 裁剪）。
+   位置由 refreshManageMenu 每帧写入（默认下弹，贴近屏幕底部时上弹） */
+.pp-menu-float{
+  position:fixed;z-index:55;min-width:104px;display:none;
+  flex-direction:column;gap:2px;padding:6px;
+  background:rgba(16,24,44,.97);border:1px solid rgba(96,140,210,.3);border-radius:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.5);
+}
+.pp-menu-float.show{display:flex}
+.pp-menu-item{
+  display:block;width:100%;text-align:left;padding:7px 10px;border-radius:7px;
+  font-size:12px;font-weight:600;color:#c9d8f0;background:transparent;border:0;cursor:pointer;
+}
+.pp-menu-item:hover{background:rgba(96,140,210,.2);color:#fff}
+.pp-menu-item.danger{color:#ff9b9b}
+.pp-menu-item.danger:hover{background:rgba(226,75,74,.22);color:#ffc9c9}
+
+/* =========================================================
+   8. 神器面板（HUD）
+   ========================================================= */
+.artifact-btn{
+  padding:5px 14px;font-size:13px;font-weight:700;
+  background:linear-gradient(135deg,#ffd93d,#ff9f5b);color:#3a2a05;border:0;
+}
+.artifact-panel{
+  position:absolute;left:14px;top:52px;z-index:40;width:236px;display:none;
+  flex-direction:column;gap:4px;padding:14px;
+  background:rgba(16,24,44,.96);border:1px solid rgba(255,217,61,.35);border-radius:14px;
+  box-shadow:0 10px 32px rgba(0,0,0,.5);
+}
+.artifact-panel.show{display:flex}
+.art-title{font-size:14px;font-weight:700;color:#ffd93d;margin-bottom:4px}
+.art-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.art-name{font-size:13px;font-weight:600;color:#e8eefc}
+.art-desc{font-size:11px;color:#8fa3c4;margin:0 0 6px}
+.art-extend{padding:6px 12px;font-size:12px;font-weight:700;
+  background:linear-gradient(135deg,#3ecf8e,#2aa9e0);color:#04121a;border:0}
+/* iOS 风格开关 */
+.art-switch{
+  position:relative;width:44px;height:24px;border-radius:12px;flex:0 0 44px;
+  background:rgba(96,140,210,.25);border:1px solid rgba(96,140,210,.35);
+  cursor:pointer;transition:.18s;padding:0;
+}
+.art-switch .art-knob{
+  position:absolute;left:2px;top:2px;width:18px;height:18px;border-radius:50%;
+  background:#e8eefc;transition:.18s;
+}
+.art-switch.on{background:linear-gradient(135deg,#3ecf8e,#2aa9e0);border-color:transparent}
+.art-switch.on .art-knob{left:22px;background:#fff}
+
+/* =========================================================
+   9. 被黑屏遮罩
+   ========================================================= */
+.black-overlay{
+  position:absolute;inset:0;z-index:60;display:none;
+  align-items:center;justify-content:center;background:#000;
+}
+.black-overlay.show{display:flex}
+.black-box{text-align:center;color:#5a6478}
+.black-icon{font-size:44px;margin-bottom:10px}
+.black-msg{font-size:17px;font-weight:700;color:#8fa3c4}
+.black-tip{font-size:12px;margin-top:6px}
+
+@media(max-width:640px){
+  .pp-crown{font-size:11px}
+  .pp-manage{padding:5px 12px;font-size:12px;min-height:30px}
+  .artifact-panel{width:min(236px,calc(100vw - 28px));top:46px;left:10px}
+}
+
+/* =========================================================
+   10. 鼠标靠近蛇身：左侧信息卡
+   ========================================================= */
+.snake-info{
+  position:absolute;left:14px;top:50%;transform:translateY(-50%);z-index:6;
+  min-width:132px;max-width:200px;display:none;
+  flex-direction:column;gap:8px;padding:12px 14px;
+  background:rgba(12,20,36,.88);border:1px solid rgba(96,140,210,.28);
+  border-radius:14px;backdrop-filter:blur(8px);
+  box-shadow:0 8px 28px rgba(0,0,0,.4);
+  pointer-events:none;user-select:none;
+}
+.snake-info.show{display:flex}
+.si-head{display:flex;align-items:center;gap:8px}
+.si-dot{width:10px;height:10px;border-radius:50%;flex:0 0 10px}
+.si-name{font-size:13px;font-weight:700;color:#e8eefc;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.si-grid{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;
+  font-size:12px;color:#8fa3c4;align-items:baseline}
+.si-grid b{color:#e8eefc;font-weight:700;font-variant-numeric:tabular-nums;
+  justify-self:end}
+
+@media(max-width:640px){
+  .snake-info{left:8px;min-width:112px;padding:9px 11px}
+  .si-name{font-size:12px}
+  .si-grid{font-size:11px}
+}
+
+/* =========================================================
+   11. 玩家面板 hover 详情卡（fixed 独立元素，定位到悬停行左侧）
+   ========================================================= */
+.pp-detail{
+  position:fixed;z-index:50;transform:translateY(-50%);
+  min-width:150px;display:none;flex-direction:column;gap:6px;
+  padding:10px 12px;white-space:nowrap;
+  background:rgba(12,20,36,.96);border:1px solid rgba(96,140,210,.32);
+  border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.5);
+  pointer-events:none;user-select:none;
+}
+.pp-detail.show{display:flex}
+.pd-head{display:flex;align-items:center;gap:7px}
+.pd-dot{width:9px;height:9px;border-radius:50%;flex:0 0 9px}
+.pd-name{font-size:13px;font-weight:700;color:#e8eefc}
+.pd-grid{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;
+  font-size:12px;color:#8fa3c4;align-items:baseline}
+.pd-grid b{color:#e8eefc;font-weight:700;font-variant-numeric:tabular-nums;
+  justify-self:end}
+
+@media(max-width:640px){
+  .pp-detail{min-width:128px;padding:9px 11px}
+  .pd-name{font-size:12px}
+  .pd-grid{font-size:11px;gap:3px 10px}
+}
+
+/* =========================================================
+   12. 竞赛模式：大厅卡片 / HUD 倒计时 / 结算排名
+   ========================================================= */
+.comp-card{
+  margin:10px 0 4px;padding:12px 14px;
+  background:rgba(255,217,61,.06);border:1px solid rgba(255,217,61,.22);border-radius:12px;
+}
+.comp-card .setting-title{font-size:15px;color:#ffd93d}
+.comp-toggle{
+  display:flex;align-items:center;gap:8px;margin-top:8px;
+  font-size:12px;color:#c9d8f0;cursor:pointer;user-select:none;
+}
+.comp-toggle input{width:16px;height:16px;accent-color:#ffd93d;cursor:pointer}
+.comp-timer{color:#ffd93d;font-weight:700;font-variant-numeric:tabular-nums}
+.comp-timer[hidden]{display:none}
+
+.comp-box{max-width:340px;width:min(340px,calc(100vw - 40px))}
+.comp-ranks{
+  display:flex;flex-direction:column;gap:4px;margin:12px 0;max-height:46vh;overflow-y:auto;
+}
+.comp-rank-row{
+  display:flex;align-items:center;gap:8px;padding:7px 10px;
+  background:rgba(96,140,210,.08);border-radius:9px;font-size:13px;
+}
+.cr-medal{flex:0 0 26px;font-weight:700;color:#ffd93d;text-align:center}
+.cr-dot{width:9px;height:9px;border-radius:50%;flex:0 0 9px}
+.cr-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e8eefc;font-weight:600}
+.cr-score{color:#ffd93d;font-weight:700;font-variant-numeric:tabular-nums}
+.comp-empty{padding:14px;text-align:center;color:#8fa3c4;font-size:13px}
+
+@media(max-width:640px){
+  .comp-box{width:calc(100vw - 24px)}
+  .comp-rank-row{font-size:12px;padding:6px 8px}
 }

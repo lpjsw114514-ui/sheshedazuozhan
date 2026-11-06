@@ -91,11 +91,10 @@
     <div class="setting-row">
       <div class="setting-label">
         <span class="setting-name">🏆 胜利长度</span>
-        <span class="setting-value" id="winLenValue">3000</span>
+        <span class="setting-value" id="winLenValue">400</span>
       </div>
-      <input type="number" id="winLen" class="num-input" min="100" max="5000" step="100" value="3000" inputmode="numeric">
       <div class="setting-ticks">
-        <span>100</span><span>自定义范围 100 ~ 5000</span><span>5000</span>
+        <span>随地图像素自动设定</span><span>身长达到即胜利</span>
       </div>
     </div>
 
@@ -103,21 +102,30 @@
       当前设置：每 25 格 <b>1 ~ 7</b> 个食物
     </div>
     <div class="setting-summary win-summary" id="settingSummaryWin">
-      胜利长度 <b>3000</b>（身长达到即胜利）
+      胜利长度 <b>400</b>（身长达到即胜利）
     </div>
   </div>
 
-  <!-- 自定义地图 -->
+  <!-- 地图选择 -->
   <div class="card setting-card" id="mapCard">
     <div class="setting-header">
-      <h2 class="setting-title">🗺 自定义地图</h2>
-      <button class="btn ghost small" id="btnMapReset">恢复默认</button>
+      <h2 class="setting-title">🗺 地图选择</h2>
     </div>
-    <p class="setting-desc">当前地图：<b id="mapName">默认（无墙体）</b> · 墙体碰到即死</p>
+    <p class="setting-desc">当前地图：<b id="mapName">200×200</b> · 碰到边界或其他蛇即死亡</p>
     <div class="setting-row">
-      <button class="btn" id="btnMapEdit">✏️ 编辑地图</button>
+      <div class="setting-label">
+        <span class="setting-name">地图像素</span>
+        <span class="setting-value" id="mapWinHint">胜利长度 400</span>
+      </div>
+      <select id="mapSize" class="num-input">
+        <option value="0">200×200（小图快节奏）</option>
+        <option value="1">400×400</option>
+        <option value="2">800×800</option>
+        <option value="3">1600×1600（大图）</option>
+        <option value="4">1600×1600 · 房主有神器</option>
+      </select>
     </div>
-    <p class="online-tip">支持画笔 / 橡皮 / 矩形与预设（四边框、迷宫、随机障碍、中心十字）；<br>可导出地图码分享，联机时自动使用房主的地图。</p>
+    <p class="online-tip">联机时以房主选择的地图为准；胜利长度随地图像素自动设定（身长达到即胜利）。<br>「房主有神器」版：房主可用神器面板（不死 / 吸附食物 / 加长 100 格）。</p>
   </div>
 
   <p class="hintbar">
@@ -132,11 +140,12 @@
 
   <div class="hud">
     <div class="hud-left">
-      <span class="score">得分 <b id="hudScore">0</b></span>
-      <span class="score">长度 <b id="hudLength">5</b><span class="win-target" id="hudWinTarget">/3000</span></span>
+      <span class="score">长度 <b id="hudLength">5</b><span class="win-target" id="hudWinTarget">/400</span></span>
       <span class="score">排名 <b id="hudRank">1</b>/<span id="hudTotal">6</span></span>
+      <span class="score comp-timer" id="hudCompTimer" hidden>⏱ 10:00</span>
       <span class="score food-info">食物 <b id="hudFoodRange">1~7</b></span>
       <span class="score online-info" id="hudOnline" hidden>🌐 <b id="hudOnlineCount">1</b> 人 · <span id="hudOnlineRole">房主</span><span id="hudRoomNo"></span></span>
+      <button class="btn artifact-btn" id="btnArtifact" hidden>✨ 神器</button>
     </div>
     <div class="hud-right">
       <button class="btn ghost" id="btnPause">暂停</button>
@@ -144,7 +153,30 @@
     </div>
   </div>
 
+  <!-- 神器面板（仅 1600×1600 房主有神器版地图） -->
+  <div class="artifact-panel" id="artifactPanel">
+    <div class="art-title">✨ 房主神器</div>
+    <div class="art-row">
+      <span class="art-name">1. 房主不死</span>
+      <button class="art-switch" data-art="immortal" role="switch" aria-checked="false"><span class="art-knob"></span></button>
+    </div>
+    <p class="art-desc">撞自己不死 · 撞墙自动向两边 · 撞成员成员死</p>
+    <div class="art-row">
+      <span class="art-name">2. 吸附食物</span>
+      <button class="art-switch" data-art="magnet" role="switch" aria-checked="false"><span class="art-knob"></span></button>
+    </div>
+    <p class="art-desc">蛇头 5×5 范围内食物自动飞来</p>
+    <div class="art-row">
+      <span class="art-name">3. 房主加长</span>
+      <button class="btn small art-extend" id="btnArtExtend">加长 100 格</button>
+    </div>
+    <p class="art-desc">地不够时地图向两边扩展</p>
+  </div>
+
   <div class="players-panel" id="playersPanel"></div>
+
+  <!-- 鼠标靠近蛇身时左侧弹出的信息卡 -->
+  <div class="snake-info" id="snakeInfo"></div>
 
   <div class="respawn-overlay" id="respawnOverlay">
     <div class="respawn-box">
@@ -168,11 +200,35 @@
     <div class="pause-box">
       <div class="pause-icon" id="winIcon">🏆</div>
       <div class="msg" id="winMsg">获得胜利！</div>
-      <div class="countdown" id="winLen">身长 3000</div>
+      <div class="countdown" id="winLen">身长 400</div>
       <div class="win-actions">
-        <button class="btn" id="btnWinRestart">重新开始</button>
+        <button class="btn" id="btnWinContinue">▶ 继续</button>
+        <button class="btn ghost" id="btnWinRestart">重新开始</button>
         <button class="btn ghost" id="btnWinMenu">返回菜单</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 竞赛结算（时间到，按身长排名） -->
+  <div class="pause-overlay" id="compOverlay">
+    <div class="pause-box comp-box">
+      <div class="pause-icon">🏁</div>
+      <div class="msg">竞赛结束！最终排名</div>
+      <div class="countdown">按身长排名</div>
+      <div class="comp-ranks" id="compRanks"></div>
+      <div class="win-actions">
+        <button class="btn" id="btnCompRestart">重新开始</button>
+        <button class="btn ghost" id="btnCompMenu">返回菜单</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 被房主黑屏 -->
+  <div class="black-overlay" id="blackOverlay">
+    <div class="black-box">
+      <div class="black-icon">🌑</div>
+      <div class="black-msg">你已被房主黑屏</div>
+      <div class="black-tip">等待房主恢复…</div>
     </div>
   </div>
 
@@ -220,6 +276,24 @@
             <option value="1">1 条</option>
             <option value="0">0 条（纯玩家对战）</option>
           </select>
+        </div>
+
+        <div class="comp-card" id="compCard">
+          <div class="setting-header">
+            <h2 class="setting-title">🏁 竞赛模式（仅房主可设）</h2>
+          </div>
+          <div class="ai-row">
+            <label class="pane-label" for="compMinutes">时长</label>
+            <select id="compMinutes">
+              <option value="5">5 分钟</option>
+              <option value="10" selected>10 分钟</option>
+              <option value="15">15 分钟</option>
+              <option value="20">20 分钟</option>
+              <option value="30">30 分钟</option>
+              <option value="60">60 分钟</option>
+            </select>
+          </div>
+          <label class="comp-toggle"><input type="checkbox" id="compOn"> 开启竞赛：时间到后按身长排名结算</label>
         </div>
 
         <div class="step">🚀 方式一 · 本地服务器联机（推荐，成员点链接即进）</div>
@@ -285,48 +359,6 @@
         <p class="online-tip">查看方法：Win+R → 输入 cmd → 输入 ipconfig → 看「IPv4 地址」。</p>
         <p class="online-tip">发给房主后等他点「确认该成员连接」，收到游戏画面即自动进房。</p>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- ========== 3.5 地图编辑器 ========== -->
-<div class="screen" id="scr-editor">
-  <div class="editor-wrap">
-    <div class="topbar">
-      <span class="me">🗺 地图编辑器 · <b>200×200</b> 块（每块 8×8 格）</span>
-      <button class="btn ghost" id="btnEditorBack">← 返回菜单</button>
-    </div>
-
-    <div class="card editor-card">
-      <div class="editor-tools">
-        <button class="tool active" data-tool="brush">🖌 画笔</button>
-        <button class="tool" data-tool="eraser">🧽 橡皮</button>
-        <button class="tool" data-tool="rect">▭ 矩形</button>
-        <span class="editor-count" id="mapBlockCount">0 块</span>
-      </div>
-
-      <div class="map-canvas-wrap">
-        <canvas id="mapCanvas" width="400" height="400"></canvas>
-      </div>
-
-      <div class="editor-presets">
-        <span class="pane-label">预设：</span>
-        <button class="btn ghost small" data-preset="empty">空白</button>
-        <button class="btn ghost small" data-preset="border">四边框</button>
-        <button class="btn ghost small" data-preset="maze">迷宫</button>
-        <button class="btn ghost small" data-preset="random">随机障碍</button>
-        <button class="btn ghost small" data-preset="cross">中心十字</button>
-      </div>
-
-      <div class="editor-actions">
-        <button class="btn" id="btnMapSave">💾 保存并使用</button>
-        <button class="btn ghost" id="btnMapPlay">▶ 试玩</button>
-        <button class="btn ghost" id="btnMapExport">📤 导出地图码</button>
-        <button class="btn ghost" id="btnMapImport">📥 导入地图码</button>
-      </div>
-
-      <textarea id="mapCodeBox" rows="2" placeholder="地图码将显示在这里" hidden></textarea>
-      <p class="online-tip">提示：墙体碰到即死；蛇不会出生在墙里，食物也不会生成在墙里。<br>联机时自动使用房主保存的地图；上限 30000 块（保证同步体积）。</p>
     </div>
   </div>
 </div>
