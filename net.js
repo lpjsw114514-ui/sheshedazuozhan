@@ -9,6 +9,12 @@
    - 码内置 FNV 校验，复制截断会明确提示，不再莫名"连接失败"
    - 支持手动填写本机 IP 注入 SDP，绕过浏览器 mDNS 隐藏 IP
      （校园网/教室 multicast 不通时的主要失败原因）
+
+   另支持「本地服务器模式」（房主电脑运行 1.exe）：
+   - 页面由 1.exe 提供时走同源 ws://，按 6 位房间号匹配
+   - 游戏消息经房主电脑中转（WebRTC 在 http 页面不可用，
+     且房主电脑即服务器，延迟为局域网级）
+   - 同一套 on.* 回调，上层游戏逻辑零改动
    ========================================================= */
 const Net = (function () {
 
@@ -31,6 +37,10 @@ const Net = (function () {
     peerClose: null,   // host: (peerId)
     hostOpen:  null,   // guest
     hostClose: null,   // guest
+    hostAway:  null,   // guest: (bool) 房主页面关闭/返回（服务器模式）
+    serverHostOpen: null, // host: (room) 服务器房间已就绪
+    serverError:    null, // (errMsg) 服务器返回的错误
+    serverClose:    null, // () ws 连接断开
   };
 
   /* ================= 压缩 / 编码 ================= */
@@ -262,26 +272,156 @@ const Net = (function () {
     return { ok: true, code, mdns: hasMdnsCandidate(rawSdp) };
   }
 
+  /* =========================================================
+     本地服务器模式（房主电脑运行 1.exe）
+     ---------------------------------------------------------
+     page <-ws-> 1.exe <-ws-> 房主/成员浏览器
+     1.exe 只做 JSON 转发；房主浏览器仍是游戏权威。
+     ========================================================= */
+  const serverState = { ws: null, connected: false, mode: false, room: '' };
+  const serverPeers = new Set(); // 服务器模式下房主侧的成员 id
+
+  /* https 页面禁止连接局域网 ws（混合内容），必须从房主给的
+     http://IP:端口 网址打开；localhost/文件协议可用 */
+  function serverSupported(){
+    return location.protocol === 'http:' || location.protocol === 'file:';
+  }
+  function serverWsUrl(addr){
+    addr = String(addr || '').trim().replace(/^wss?:\/\//i, '').replace(/\/+.*$/, '');
+    if (!addr) addr = location.host;
+    if (!/:\d+$/.test(addr)) addr += ':9600';
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    return proto + '://' + addr + '/ws';
+  }
+
+  function connectServer(addr){
+    return new Promise((resolve, reject) => {
+      if (typeof WebSocket === 'undefined'){
+        reject(new Error('当前浏览器不支持 WebSocket，请换 Chrome / Edge')); return;
+      }
+      let ws;
+      try { ws = new WebSocket(serverWsUrl(addr)); }
+      catch (e) { reject(new Error('地址格式不正确：' + e.message)); return; }
+      const timer = setTimeout(() => {
+        try { ws.close(); } catch (e) {}
+        reject(new Error('连接超时：请确认房主已运行 1.exe、地址和端口正确、双方在同一网络'));
+      }, 8000);
+      ws.onopen = () => {
+        clearTimeout(timer);
+        serverState.ws = ws;
+        serverState.connected = true;
+        ws.onmessage = e => {
+          let m; try { m = JSON.parse(e.data); } catch (err) { return; }
+          if (m.t === 'room'){
+            serverState.room = m.room || '';
+            serverState.mode = true;
+            if (m.role === 'host'){
+              if (on.serverHostOpen) on.serverHostOpen(m.room);
+            } else {
+              role = 'guest';
+              if (on.hostOpen) on.hostOpen();
+            }
+          } else if (m.t === 'msg'){
+            if (on.message) on.message(m.from === 'host' ? null : m.from, m.data);
+          } else if (m.t === 'peer-join'){
+            serverPeers.add(m.id);
+            if (on.peerOpen) on.peerOpen(m.id);
+          } else if (m.t === 'nodes'){
+            /* 辅助节点列表变化（房主端）：HUD 显示 🔀 辅助×N + 可分享网址 */
+            if (on.serverNodes) on.serverNodes(m.n || 0, m.list || []);
+          } else if (m.t === 'peer-leave'){
+            serverPeers.delete(m.id);
+            if (on.peerClose) on.peerClose(m.id);
+          } else if (m.t === 'host-left'){
+            if (on.hostClose) on.hostClose();
+          } else if (m.t === 'host-away'){
+            if (on.hostAway) on.hostAway(true);
+          } else if (m.t === 'host-back'){
+            if (on.hostAway) on.hostAway(false);
+          } else if (m.t === 'err'){
+            if (on.serverError) on.serverError(m.err || '服务器错误');
+          }
+        };
+        ws.onclose = () => {
+          serverState.connected = false;
+          serverPeers.clear();
+          if (on.serverClose) on.serverClose();
+        };
+        ws.onerror = () => {};
+        resolve();
+      };
+      ws.onerror = () => {
+        clearTimeout(timer);
+        reject(new Error('连不上服务器：请确认房主已运行 1.exe，且本页面是从房主给的 http://IP:端口 网址打开的'));
+      };
+    });
+  }
+
+  function createServerRoom(roomNo){
+    const ws = serverState.ws;
+    if (ws && ws.readyState === 1){
+      try { ws.send(JSON.stringify({ t: 'create', room: roomNo || '' })); } catch (e) {}
+    }
+  }
+  function joinServerRoom(roomNo){
+    const ws = serverState.ws;
+    if (ws && ws.readyState === 1){
+      try { ws.send(JSON.stringify({ t: 'join', role: 'guest', room: String(roomNo || '') })); } catch (e) {}
+    }
+  }
+  function serverSend(to, obj){
+    const ws = serverState.ws;
+    if (ws && ws.readyState === 1){
+      try { ws.send(JSON.stringify({ t: 'to', to, data: obj })); } catch (e) {}
+    }
+  }
+  /* 房主踢人（服务器模式）：服务器断开该成员的 ws，并向其推送 kicked */
+  function serverKick(id){
+    const ws = serverState.ws;
+    if (ws && ws.readyState === 1){
+      try { ws.send(JSON.stringify({ t: 'kick', id })); } catch (e) {}
+    }
+  }
+  /* 踢出指定成员：P2P 关闭 DataChannel；服务器模式通知服务器断开 */
+  function closePeer(id){
+    if (serverState.mode && serverState.connected){ serverKick(id); return; }
+    const p = peers.get(id);
+    if (p){
+      try { p.dc.close(); } catch (e) {}
+      try { p.pc.close(); } catch (e) {}
+      peers.delete(id);
+      if (on.peerClose) on.peerClose(id);
+    }
+  }
+
   /* ================= 发送 / 状态 ================= */
   function sendToPeer(id, obj) {
+    if (serverState.mode && serverState.connected){ serverSend(id, obj); return; }
     const p = peers.get(id);
     if (p && p.dc && p.dc.readyState === 'open') {
       try { p.dc.send(JSON.stringify(obj)); } catch (e) {}
     }
   }
   function broadcast(obj, exceptId) {
+    if (serverState.mode && serverState.connected){
+      serverPeers.forEach(id => { if (id !== exceptId) serverSend(id, obj); });
+      return;
+    }
     peers.forEach((p, id) => { if (id !== exceptId) sendToPeer(id, obj); });
   }
   function sendToHost(obj) {
+    if (serverState.mode && serverState.connected){ serverSend('host', obj); return; }
     if (guestDC && guestDC.readyState === 'open') {
       try { guestDC.send(JSON.stringify(obj)); } catch (e) {}
     }
   }
   function isPeerOpen(id) {
+    if (serverState.mode) return serverState.connected && serverPeers.has(id);
     const p = peers.get(id);
     return !!(p && p.dc && p.dc.readyState === 'open');
   }
   function hostReady() {
+    if (serverState.mode) return serverState.connected;
     return !!(guestDC && guestDC.readyState === 'open');
   }
 
@@ -290,13 +430,19 @@ const Net = (function () {
     peers.clear();
     if (guestDC) { try { guestDC.close(); } catch (e) {} guestDC = null; }
     if (guestPC) { try { guestPC.close(); } catch (e) {} guestPC = null; }
+    if (serverState.ws) { try { serverState.ws.close(); } catch (e) {} serverState.ws = null; }
+    serverState.connected = false;
+    serverState.mode = false;
+    serverState.room = '';
+    serverPeers.clear();
     role = null;
   }
 
   return {
     on,
     createInvite, acceptAnswer, joinWithCode,
-    sendToPeer, broadcast, sendToHost, closeAll,
+    connectServer, createServerRoom, joinServerRoom, serverSupported,
+    sendToPeer, broadcast, sendToHost, closeAll, closePeer,
     isPeerOpen, hostReady,
     _debug: { enc, dec, injectIp, slimSdp, hasMdnsCandidate }, // 供测试/调试
   };

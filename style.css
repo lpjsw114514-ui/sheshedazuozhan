@@ -223,6 +223,12 @@ input::placeholder{color:#4d6284}
 .score b{color:#ffd93d;font-weight:700;font-variant-numeric:tabular-nums}
 .score b.immune{color:#ffe97a;text-shadow:0 0 10px rgba(255,217,61,.85)}
 .food-info b{color:#5ee7a0}
+.skin-btn,.map-btn{
+  padding:4px 10px;border-radius:10px;font-size:12px;white-space:nowrap;
+  background:rgba(40,80,140,.35);border:1px solid rgba(120,180,255,.35);color:#cfe4ff;
+}
+.skin-btn b{color:#fff}
+.skin-btn:hover,.map-btn:hover{background:rgba(60,110,190,.55);border-color:rgba(150,210,255,.7)}
 .win-target{color:#5f78a0;font-size:11px;margin-left:1px;font-variant-numeric:tabular-nums}
 
 .players-panel{
@@ -359,6 +365,7 @@ input::placeholder{color:#4d6284}
 /* HUD 联机状态 */
 .online-info{color:#9fb6d8;display:inline-flex;align-items:center;gap:5px}
 .online-info b{color:#5ee7a0;font-weight:700}
+.node-info{color:#c4b5fd;display:inline-flex;align-items:center;gap:5px;cursor:help}
 
 /* 下载按钮（1.exe）：与其他按钮同尺寸 */
 .btn.dl{
@@ -404,6 +411,16 @@ input::placeholder{color:#4d6284}
   }
   .pp-row{font-size:11px;padding:3px 5px}
 
+  /* 联机聊天框（窄屏缩小，top 由脚本按 HUD 实际高度定位） */
+  .chat-box{left:10px;width:172px;padding:7px}
+  .chat-msgs{max-height:84px;font-size:10px}
+  .chat-input{font-size:11px;padding:5px 8px}
+  .chat-team{width:26px;height:26px;font-size:12px}
+  .chat-send{padding:5px 8px;font-size:11px}
+  /* 队伍面板窄屏改上下排布 */
+  .team-cols{flex-direction:column;gap:8px}
+  .team-col-list{max-height:150px}
+
   /* 联机大厅 */
   .online-wrap{padding:12px}
   .online-card{padding:15px;gap:11px}
@@ -436,7 +453,29 @@ input::placeholder{color:#4d6284}
   cursor:pointer;transition:.15s;
 }
 .pp-manage:hover{background:rgba(96,140,210,.26);color:#e8eefc}
+/* 管理身份成员的禁言按钮 + 被禁言标识（成员视角） */
+.pp-mute{
+  flex:0 0 auto;width:22px;height:22px;padding:0;border-radius:7px;font-size:12px;
+  background:rgba(96,140,210,.14);border:1px solid rgba(96,140,210,.3);color:#9fb6d8;
+  cursor:pointer;transition:.15s;line-height:1;
+}
+.pp-mute:hover{background:rgba(255,120,120,.22);color:#ffb4b4}
+.pp-muted{flex:0 0 auto;font-size:11px;cursor:default;user-select:none}
+.pp-row.muted .pp-nick{opacity:.55;text-decoration:line-through}
 .pp-row{position:relative}
+/* 队伍徽章（联机组队）：色块字母 A/B/C… */
+.pp-team{
+  flex:0 0 auto;min-width:18px;height:18px;padding:0 4px;border-radius:6px;
+  font-size:10px;font-weight:800;color:#0a0f1e;text-align:center;line-height:18px;
+  cursor:default;user-select:none;
+}
+/* 组队邀请按钮（联机对局中，一队最多 3 人） */
+.pp-invite{
+  flex:0 0 auto;width:22px;height:22px;padding:0;border-radius:7px;font-size:12px;
+  background:rgba(163,230,53,.14);border:1px solid rgba(163,230,53,.35);color:#d9f99d;
+  cursor:pointer;transition:.15s;line-height:1;
+}
+.pp-invite:hover{background:rgba(163,230,53,.3);color:#f7fee7}
 /* 管理菜单：fixed 浮动元素（挂在 body 下，避开面板 overflow-y:auto 裁剪）。
    位置由 refreshManageMenu 每帧写入（默认下弹，贴近屏幕底部时上弹） */
 .pp-menu-float{
@@ -472,8 +511,181 @@ input::placeholder{color:#4d6284}
 .art-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .art-name{font-size:13px;font-weight:600;color:#e8eefc}
 .art-desc{font-size:11px;color:#8fa3c4;margin:0 0 6px}
-.art-extend{padding:6px 12px;font-size:12px;font-weight:700;
-  background:linear-gradient(135deg,#3ecf8e,#2aa9e0);color:#04121a;border:0}
+/* 倍速滑块（0.5x~10x） */
+.art-speed{width:100%;margin:2px 0 4px;cursor:pointer;accent-color:#ffd93d}
+.art-speed-val{font-size:13px;font-weight:700;color:#ffd93d;min-width:38px;text-align:right}
+/* 成员倍速浮动条（被赠送神器后显示） */
+.speed-panel{
+  position:absolute;left:14px;bottom:14px;z-index:38;display:none;
+  align-items:center;gap:8px;padding:8px 12px;
+  background:rgba(16,24,44,.92);border:1px solid rgba(255,217,61,.35);border-radius:12px;
+  box-shadow:0 8px 24px rgba(0,0,0,.4);
+}
+.speed-panel.show{display:flex}
+.sp-title{font-size:12px;font-weight:700;color:#ffd93d;white-space:nowrap}
+.sp-val{font-size:12px;font-weight:700;color:#e8eefc;min-width:34px;text-align:right}
+.speed-panel input[type=range]{width:120px;cursor:pointer;accent-color:#ffd93d}
+.speed-info{color:#ffd93d}
+
+/* =========================================================
+   道具系统：HUD 问号 / 右侧道具栏 / 图鉴 / 冰块选人
+   ========================================================= */
+/* 左上角圆形问号 */
+.item-help-btn{
+  width:26px;height:26px;min-height:26px;padding:0;border-radius:50%;
+  font-size:14px;font-weight:800;line-height:1;
+  background:rgba(96,140,210,.22);color:#cfe0ff;border:1px solid rgba(96,140,210,.45);
+  cursor:pointer;
+}
+.item-help-btn:hover{background:rgba(96,140,210,.4);color:#fff}
+
+/* =========================================================
+   联机聊天框（HUD 下方，半透明 + 高斯模糊）
+   ========================================================= */
+.chat-box{
+  position:absolute;left:18px;top:60px;z-index:34;width:224px;
+  display:flex;flex-direction:column;gap:6px;padding:8px;
+  background:rgba(12,20,36,.55);
+  border:1px solid rgba(96,140,210,.22);
+  border-radius:14px;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:0 8px 24px rgba(0,0,0,.35);
+  opacity:.75;transition:opacity .25s;
+}
+/* 一开始（无消息）保持透明感；有消息/悬停/打字时清晰显示 */
+.chat-box:hover,.chat-box:focus-within,.chat-box.has-msgs{opacity:1}
+.chat-box[hidden]{display:none} /* display:flex 会盖掉 UA 的 [hidden]，必须显式 */
+.chat-msgs{
+  display:flex;flex-direction:column;gap:2px;
+  max-height:112px;overflow-y:auto;overscroll-behavior:contain;
+  font-size:11px;line-height:1.55;
+}
+.chat-msgs:empty{display:none}
+.cm{word-break:break-all}
+.cm-tag{font-weight:700}
+.cm-tag.t-host{color:#ffd93d}
+.cm-tag.t-admin{color:#ff9f5b}
+.cm-tag.t-member{color:#5bc8ff}
+.cm-name{color:#e8eefc;font-weight:600}
+.cm-text{color:#b9c8e4}
+.chat-row{display:flex;gap:6px}
+.chat-input{
+  flex:1;min-width:0;font-size:12px;padding:6px 10px;border-radius:9px;
+  background:rgba(8,14,28,.6);border:1px solid rgba(96,140,210,.3);color:#e8eefc;outline:none;
+}
+.chat-input::placeholder{color:#5f78a0}
+.chat-input:focus{border-color:rgba(91,200,255,.65)}
+.chat-input:disabled{opacity:.55;cursor:not-allowed}
+.chat-input:disabled::placeholder{color:#ff9b9b}
+.chat-send{
+  padding:6px 11px;font-size:12px;font-weight:700;border:0;border-radius:9px;cursor:pointer;
+  background:linear-gradient(135deg,#3ecf8e,#2aa9e0);color:#04121a;
+}
+/* 聊天行内嵌的组队键 */
+.chat-team{
+  flex:0 0 auto;width:30px;height:30px;padding:0;border-radius:9px;cursor:pointer;
+  font-size:14px;line-height:1;background:rgba(167,139,250,.28);
+  border:1px solid rgba(167,139,250,.55);color:#e9d5ff;
+}
+.chat-team:hover{background:rgba(167,139,250,.5);color:#fff}
+.chat-team.on{background:linear-gradient(135deg,#a78bfa,#5bc8ff);color:#0b1220}
+
+/* 击杀/技能播报（聊天框下方，半透明模糊；超出向上滚） */
+.kill-feed{
+  position:absolute;left:18px;top:190px;z-index:34;width:224px;
+  display:flex;flex-direction:column;gap:3px;padding:7px 9px;
+  background:rgba(12,20,36,.55);
+  border:1px solid rgba(255,217,61,.22);
+  border-radius:12px;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:0 8px 24px rgba(0,0,0,.3);
+  font-size:11px;line-height:1.5;
+}
+.kill-feed[hidden]{display:none}
+.kf-title{font-size:10px;font-weight:700;color:#ffd93d;letter-spacing:.5px}
+.kf-msgs{display:flex;flex-direction:column;gap:2px;max-height:84px;overflow-y:auto;overscroll-behavior:contain}
+.kf-msgs:empty{display:none}
+.kf-row{word-break:break-all}
+.kf-row.k-kill .kf-text{color:#ff9b9b}
+.kf-row.k-skill .kf-text{color:#9ad9ff}
+.kf-time{color:#7f93b8;margin-right:5px;font-variant-numeric:tabular-nums}
+
+/* 队伍管理面板（左邀请 / 右队伍） */
+.team-panel-box{max-width:min(92vw,640px)}
+.team-cols{display:flex;gap:12px;margin:12px 0;text-align:left}
+.team-col{
+  flex:1;min-width:0;padding:10px;border-radius:12px;
+  background:rgba(8,14,28,.55);border:1px solid rgba(96,140,210,.24);
+}
+.team-col-title{font-size:13px;font-weight:700;color:#5bc8ff;margin-bottom:8px}
+.team-col-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto}
+.team-row{
+  display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:8px;
+  font-size:12px;color:#e8eefc;background:rgba(96,140,210,.12);
+}
+.team-row.me{background:rgba(91,200,255,.2)}
+.team-row-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team-row-role{font-size:11px;font-weight:700;color:#ffd93d;white-space:nowrap}
+.team-act{
+  padding:3px 8px;font-size:11px;font-weight:700;border:0;border-radius:7px;cursor:pointer;
+  background:rgba(91,200,255,.28);color:#e8eefc;white-space:nowrap;
+}
+.team-act:hover{background:rgba(91,200,255,.52);color:#fff}
+.team-act.danger{background:rgba(226,75,74,.34);color:#ffd0d0}
+.team-act.danger:hover{background:rgba(226,75,74,.6)}
+.team-act:disabled{opacity:.4;cursor:not-allowed}
+.team-empty{font-size:12px;color:#8fa3c4;line-height:1.7}
+
+/* 右侧道具栏：圆角方块 emoji（默认隐藏，有库存时 .show） */
+.item-bar{
+  position:absolute;right:14px;top:52px;z-index:36;display:none;
+  flex-direction:column;gap:8px;
+}
+.item-bar.show{display:flex}
+.it-cell{
+  position:relative;width:46px;height:46px;border-radius:12px;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  background:rgba(16,24,44,.92);border:1px solid rgba(96,140,210,.35);
+  box-shadow:0 6px 18px rgba(0,0,0,.4);transition:.15s;
+}
+.it-cell:hover{border-color:rgba(120,255,190,.7);transform:scale(1.06)}
+.it-cell:not(.has){opacity:.45;filter:grayscale(.8);cursor:default}
+.it-cell:not(.has):hover{transform:none;border-color:rgba(96,140,210,.35)}
+.it-emoji{font-size:22px;line-height:1}
+.it-count{
+  position:absolute;right:-4px;bottom:-4px;min-width:18px;height:18px;padding:0 4px;
+  border-radius:9px;background:#2aa9e0;color:#04121a;
+  font-size:11px;font-weight:800;line-height:18px;text-align:center;
+}
+
+/* 道具图鉴 */
+.item-help-box{max-width:380px;text-align:left}
+.ih-list{display:flex;flex-direction:column;gap:10px;margin:12px 0}
+.ih-row{display:flex;gap:10px;align-items:flex-start;
+  padding:9px 10px;border-radius:10px;background:rgba(96,140,210,.1)}
+.ih-emoji{font-size:24px;line-height:1.2;flex:0 0 auto}
+.ih-text b{font-size:13px;color:#ffd93d;display:block;margin-bottom:2px}
+.ih-text p{font-size:12px;color:#c9d8f0;margin:0;line-height:1.5}
+.ih-tip{font-size:11px;color:#8fa3c4;line-height:1.6;margin:0 0 12px}
+
+/* 冰块：选择冻住目标 */
+.ice-box{max-width:340px}
+.ice-targets{display:flex;flex-direction:column;gap:6px;margin:12px 0;max-height:280px;overflow-y:auto}
+.ice-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;
+  background:rgba(96,140,210,.1)}
+.ice-dot{width:10px;height:10px;border-radius:50%;flex:0 0 10px}
+.ice-name{flex:1;font-size:13px;font-weight:600;color:#e8eefc;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ice-btn{padding:5px 12px;font-size:12px;font-weight:700;
+  background:linear-gradient(135deg,#7dd3fc,#38bdf8);color:#082f49;border:0}
+.ice-btn:disabled{background:rgba(120,140,170,.25);color:#8fa3c4;cursor:not-allowed}
+.ice-empty{font-size:12px;color:#8fa3c4;text-align:center;padding:14px 0}
+
+@media(max-width:640px){
+  .item-bar{right:8px;top:46px;gap:6px}
+  .it-cell{width:40px;height:40px;border-radius:10px}
+  .it-emoji{font-size:19px}
+}
 /* iOS 风格开关 */
 .art-switch{
   position:relative;width:44px;height:24px;border-radius:12px;flex:0 0 44px;
@@ -503,7 +715,9 @@ input::placeholder{color:#4d6284}
 @media(max-width:640px){
   .pp-crown{font-size:11px}
   .pp-manage{padding:5px 12px;font-size:12px;min-height:30px}
+  .pp-invite{width:30px;height:30px;font-size:14px}
   .artifact-panel{width:min(236px,calc(100vw - 28px));top:46px;left:10px}
+  .speed-panel input[type=range]{width:90px}
 }
 
 /* =========================================================
@@ -593,4 +807,57 @@ input::placeholder{color:#4d6284}
 @media(max-width:640px){
   .comp-box{width:calc(100vw - 24px)}
   .comp-rank-row{font-size:12px;padding:6px 8px}
+}
+
+
+/* ========== 皮肤选择面板（3.0.16）========== */
+.skin-box{max-width:520px}
+.skin-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0}
+.sk-card{
+  position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:12px 6px;border-radius:12px;cursor:pointer;
+  background:rgba(20,30,52,.75);border:2px solid rgba(96,140,210,.3);color:#dce8ff;
+  transition:transform .12s,border-color .12s,background .12s;
+}
+.sk-card:hover{transform:translateY(-2px);border-color:rgba(120,255,190,.7)}
+.sk-card.selected{border-color:#5ee7a0;background:rgba(30,70,60,.7)}
+.sk-preview{
+  display:flex;align-items:center;justify-content:center;
+  width:56px;height:44px;border-radius:10px;background:rgba(8,14,28,.8);
+}
+.sk-dot{width:38px;height:26px;border-radius:13px 13px 8px 8px;box-shadow:0 0 12px currentColor}
+.sk-avatar{width:52px;height:52px;border-radius:50%;object-fit:cover}
+.sk-name{font-size:13px;font-weight:600}
+.sk-check{position:absolute;top:4px;right:8px;color:#5ee7a0;font-weight:bold}
+
+/* ========== 弹窗大地图（周围高斯模糊）========== */
+.map-overlay{
+  position:fixed;inset:0;z-index:60;display:none;
+  align-items:center;justify-content:center;
+  background:rgba(4,8,18,.55);
+  backdrop-filter:blur(14px) saturate(0.8);
+  -webkit-backdrop-filter:blur(14px) saturate(0.8);
+}
+.map-overlay.show{display:flex}
+.map-box{
+  position:relative;display:flex;flex-direction:column;gap:10px;
+  padding:16px;border-radius:18px;
+  background:rgba(12,20,38,.92);border:1px solid rgba(120,180,255,.35);
+  box-shadow:0 20px 80px rgba(0,0,0,.6);
+  max-width:min(94vw,940px);max-height:94vh;
+}
+.map-head{display:flex;align-items:center;justify-content:space-between;font-size:16px;font-weight:700;color:#dce8ff}
+#bigMapCanvas{
+  display:block;max-width:min(90vw,900px);max-height:78vh;
+  width:900px;height:900px;object-fit:contain;
+  border-radius:12px;border:1px solid rgba(96,140,210,.4);
+  cursor:crosshair;background:#0d1424;
+}
+.map-info{position:absolute;left:24px;top:70px;z-index:2;min-width:170px}
+.map-tip{margin:0;font-size:12px;color:#8fa6cc;text-align:center}
+@media(max-width:700px){
+  .skin-grid{grid-template-columns:repeat(3,1fr)}
+  .skin-btn,.map-btn{font-size:11px;padding:3px 6px}
+  #bigMapCanvas{width:86vw;height:86vw}
+  .map-info{left:12px;top:60px}
 }

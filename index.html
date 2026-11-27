@@ -2,150 +2,535 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>蛇蛇大作战 - 正在更新中</title>
-<style>
-  body {
-    margin: 0;
-    height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    background-color: #0b1120;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    color: #fff;
-  }
-
-  .card {
-    background: #1e293b;
-    padding: 40px;
-    border-radius: 24px;
-    text-align: center;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.1);
-    width: 400px;
-    border: 1px solid rgba(255,255,255,0.05);
-  }
-
-  /* 顶部Logo与发光效果 */
-  .logo {
-    font-size: 60px;
-    margin-bottom: 20px;
-    filter: drop-shadow(0 0 15px rgba(163, 230, 53, 0.6));
-    animation: float 3s ease-in-out infinite;
-  }
-
-  @keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-10px); }
-  }
-
-  /* 标题 */
-  .title {
-    font-size: 32px;
-    font-weight: bold;
-    margin-bottom: 15px;
-    background: linear-gradient(90deg, #4ade80, #38bdf8);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-
-  /* 文字说明 */
-  .desc-main {
-    font-size: 16px;
-    color: #cbd5e1;
-    margin-bottom: 10px;
-  }
-
-  .desc-sub {
-    font-size: 14px;
-    color: #94a3b8;
-    margin-bottom: 30px;
-  }
-
-  /* 贪吃蛇加载条 */
-  .snake-loader {
-    width: 100%;
-    height: 20px;
-    background: #0f172a;
-    border-radius: 10px;
-    position: relative;
-    overflow: hidden;
-    margin-bottom: 30px;
-    border: 1px solid #334155;
-  }
-
-  /* 进度条上的豆子 */
-  .snake-loader::before {
-    content: '••••••••';
-    position: absolute;
-    top: 50%;
-    left: 10px;
-    transform: translateY(-50%);
-    color: #475569;
-    letter-spacing: 5px;
-  }
-
-  /* 爬行的贪吃蛇 */
-  .snake {
-    width: 30px;
-    height: 14px;
-    background: #a3e635;
-    border-radius: 4px;
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    box-shadow: 0 0 10px #a3e635;
-    animation: crawl 3s linear infinite;
-  }
-
-  /* 蛇头 */
-  .snake::after {
-    content: '';
-    position: absolute;
-    right: -6px;
-    top: 2px;
-    width: 0;
-    height: 0;
-    border-top: 5px solid transparent;
-    border-bottom: 5px solid transparent;
-    border-left: 6px solid #a3e635;
-  }
-
-  @keyframes crawl {
-    0% { left: 0%; }
-    100% { left: 100%; }
-  }
-
-  /* 禁用状态的按钮 */
-  .btn-disabled {
-    background: #334155;
-    color: #94a3b8;
-    padding: 14px;
-    border-radius: 12px;
-    font-weight: bold;
-    font-size: 16px;
-    cursor: not-allowed;
-    user-select: none;
-  }
-
-</style>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>蛇蛇大作战 · Snake Arena</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<div class="card">
-  <div class="logo">🐍</div>
-  <div class="title">系统更新中...</div>
-  <div class="desc-main">网站正在更新中，期间暂时无法访问</div>
-  <div class="desc-sub">我们正在努力为您提供更好的服务，敬请期待</div>
-  
-  <!-- 加载条区域 -->
-  <div class="snake-loader">
-    <div class="snake"></div>
+<!-- ========== 1. 取名 ========== -->
+<div class="screen active" id="scr-name">
+  <div class="card">
+    <div class="logo">🐍</div>
+    <h1>蛇蛇大作战</h1>
+    <p class="sub">SNAKE ARENA · 离线版 · 1600×1600 大世界</p>
+    <div class="field">
+      <input id="nickInput" type="text" maxlength="8" placeholder="取个名字（最多 8 位）" autocomplete="off">
+      <button class="btn" id="btnEnter">进 入 游 戏</button>
+    </div>
   </div>
-
-  <!-- 替代原有“进入游戏”按钮 -->
-  <div class="btn-disabled">维护中，请稍后再来</div>
 </div>
 
+<!-- ========== 2. 主菜单 ========== -->
+<div class="screen" id="scr-menu">
+  <div class="topbar">
+    <span class="me">🐍 <b id="menuNick"></b></span>
+    <span class="status">离线模式</span>
+  </div>
+
+  <div class="mode-grid">
+    <button class="mode-card" id="btnOffline">
+      <div class="mode-icon">🎮</div>
+      <div class="mode-title">离线游戏</div>
+      <div class="mode-desc">单机挑战 AI 蛇群，无需联网</div>
+      <div class="mode-arrow">→</div>
+    </button>
+
+    <button class="mode-card" id="btnOnline">
+      <div class="mode-icon">🌐</div>
+      <div class="mode-title">在线对战</div>
+      <div class="mode-desc">创建或加入房间，与好友同乐</div>
+      <div class="mode-badge">P2P 直连</div>
+      <div class="mode-arrow">→</div>
+    </button>
+  </div>
+
+  <!-- 联机房间进行中：退出游戏后连接保持，可一键返回 -->
+  <div class="room-bar" id="roomBar" hidden>
+    <div class="room-info">
+      <span class="room-dot"></span>
+      <span id="roomBarText">房间进行中</span>
+      <span class="room-no" id="roomBarNo" hidden>房间号 <b id="roomBarNoText"></b></span>
+    </div>
+    <div class="room-actions">
+      <button class="btn small" id="btnBackToGame">🎮 返回游戏</button>
+      <button class="btn ghost small" id="btnLeaveRoom">离开房间</button>
+    </div>
+  </div>
+
+  <!-- 食物密度设置 -->
+  <div class="card setting-card">
+    <div class="setting-header">
+      <h2 class="setting-title">🍎 食物密度设置</h2>
+      <button class="btn ghost small" id="btnResetSetting">重置</button>
+    </div>
+    <p class="setting-desc">每 <b>5×5（25 格）</b> 区域内随机生成的食物数量范围</p>
+
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">最少</span>
+        <span class="setting-value" id="minValue">1</span>
+      </div>
+      <input type="range" id="foodMin" min="1" max="7" step="1" value="1" class="slider">
+      <div class="setting-ticks">
+        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">最多</span>
+        <span class="setting-value" id="maxValue">7</span>
+      </div>
+      <input type="range" id="foodMax" min="1" max="7" step="1" value="7" class="slider">
+      <div class="setting-ticks">
+        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">🏆 胜利长度</span>
+        <span class="setting-value" id="winLenValue">400</span>
+      </div>
+      <div class="setting-ticks">
+        <span>随地图像素自动设定</span><span>身长达到即胜利</span>
+      </div>
+    </div>
+
+    <div class="setting-summary" id="settingSummary">
+      当前设置：每 25 格 <b>1 ~ 7</b> 个食物
+    </div>
+    <div class="setting-summary win-summary" id="settingSummaryWin">
+      胜利长度 <b>400</b>（身长达到即胜利）
+    </div>
+  </div>
+
+  <!-- 地图选择 -->
+  <div class="card setting-card" id="mapCard">
+    <div class="setting-header">
+      <h2 class="setting-title">🗺 地图选择</h2>
+    </div>
+    <p class="setting-desc">当前地图：<b id="mapName">200×200</b> · 碰到边界或其他蛇即死亡</p>
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">地图像素</span>
+        <span class="setting-value" id="mapWinHint">胜利长度 400</span>
+      </div>
+      <select id="mapSize" class="num-input">
+        <option value="0">200×200（小图快节奏）</option>
+        <option value="1">400×400</option>
+        <option value="2">800×800</option>
+        <option value="3">1600×1600（大图）</option>
+        <option value="4">1600×1600 · 房主有神器</option>
+      </select>
+    </div>
+    <p class="online-tip">联机时以房主选择的地图为准；胜利长度随地图像素自动设定（身长达到即胜利）。<br>「房主有神器」版：房主可用神器面板（不死 / 吸附食物 / 倍速 0.5x~10x）。</p>
+  </div>
+
+  <!-- 道具开关 -->
+  <div class="card setting-card" id="itemCard">
+    <div class="setting-header">
+      <h2 class="setting-title">🎒 道具开关</h2>
+    </div>
+    <p class="setting-desc">开启后地图中随机刷新道具（每 <b>4×4（16 格）</b> 最多 1 个，与食物不重叠）</p>
+    <label class="comp-toggle"><input type="checkbox" id="itemsOn"> 开启道具：🧊 冰冰冰 / 🥛 牛奶 / 🍊 橙子 / 💣 地雷</label>
+    <p class="online-tip">AI 不会捡道具；联机时以房主设置为准。</p>
+  </div>
+
+  <p class="hintbar">
+    💡 碰到边界或其他蛇即死亡；身长 ≥ 50 获得「钢筋蛇身」（撞到自己不会死）；
+    身长达到胜利长度即获胜（联机时以房主设置为准）。死亡时会在原蛇身位置掉落吃过的食物，3 秒后随机位置重生。
+  </p>
+</div>
+
+<!-- ========== 3. 游戏 ========== -->
+<div class="screen" id="scr-game">
+  <div id="gameWrap"><canvas id="canvas"></canvas></div>
+
+  <div class="hud" id="gameHud">
+    <div class="hud-left">
+      <button class="btn item-help-btn" id="btnItemHelp" title="道具图鉴" aria-label="道具图鉴">？</button>
+      <span class="score">长度 <b id="hudLength">5</b><span class="win-target" id="hudWinTarget">/400</span></span>
+      <span class="score">排名 <b id="hudRank">1</b>/<span id="hudTotal">6</span></span>
+      <span class="score comp-timer" id="hudCompTimer" hidden>⏱ 10:00</span>
+      <span class="score speed-info" id="hudSpeed" hidden>⚡×2</span>
+      <span class="score food-info">食物 <b id="hudFoodRange">1~7</b></span>
+      <button class="btn skin-btn" id="btnSkin" title="切换皮肤（8 款可预览）">🎨 当前皮肤：<b id="skinLabel">绿蛇</b></button>
+      <button class="btn map-btn" id="btnBigMap" title="弹窗大地图（点蛇看信息）">🗺 放大</button>
+      <span class="score online-info" id="hudOnline" hidden>🌐 <b id="hudOnlineCount">1</b> 人 · <span id="hudOnlineRole">房主</span><span id="hudRoomNo"></span></span>
+      <span class="score node-info" id="hudNodes" hidden>🔀 辅助×1</span>
+      <button class="btn artifact-btn" id="btnArtifact" hidden>✨ 神器</button>
+    </div>
+    <div class="hud-right">
+      <button class="btn ghost" id="btnPause">暂停</button>
+      <button class="btn ghost" id="btnExitGame">退出</button>
+    </div>
+  </div>
+
+  <!-- 联机聊天框（贴在 HUD 下方，半透明 + 模糊；消息超出向上滚） -->
+  <div class="chat-box" id="chatBox" hidden>
+    <div class="chat-msgs" id="chatMsgs"></div>
+    <div class="chat-row">
+      <input class="chat-input" id="chatInput" type="text" maxlength="20" placeholder="说点什么…（≤20 字）" autocomplete="off">
+      <button class="chat-team" id="btnTeam" title="组队（左边邀请，右边队伍）">🤝</button>
+      <button class="chat-send" id="chatSend" title="发送（Enter）">发送</button>
+    </div>
+  </div>
+
+  <!-- 击杀/技能播报（聊天框下方，只播报玩家击杀 + 道具技能使用） -->
+  <div class="kill-feed" id="killFeed" hidden>
+    <div class="kf-title">⚔ 战况播报</div>
+    <div class="kf-msgs" id="killFeedMsgs"></div>
+  </div>
+
+  <!-- 神器面板（仅 1600×1600 房主有神器版地图） -->
+  <div class="artifact-panel" id="artifactPanel">
+    <div class="art-title">✨ 房主神器</div>
+    <div class="art-row">
+      <span class="art-name">1. 房主不死</span>
+      <button class="art-switch" data-art="immortal" role="switch" aria-checked="false"><span class="art-knob"></span></button>
+    </div>
+    <p class="art-desc">撞自己不死 · 撞墙自动向两边 · 撞成员成员死</p>
+    <div class="art-row">
+      <span class="art-name">2. 吸附食物</span>
+      <button class="art-switch" data-art="magnet" role="switch" aria-checked="false"><span class="art-knob"></span></button>
+    </div>
+    <p class="art-desc">蛇头 5×5 范围内食物自动飞来</p>
+    <div class="art-row">
+      <span class="art-name">3. 倍速</span>
+      <span class="art-speed-val" id="artSpeedVal">×1</span>
+    </div>
+    <input type="range" class="art-speed" id="artSpeed" min="0.5" max="10" step="0.5" value="1">
+    <p class="art-desc">仅自己的蛇加速（0.5x~10x），全局速度不变；联机中别人看到的就是一条快蛇</p>
+    <div class="art-row">
+      <span class="art-name">4. 不受道具影响</span>
+      <button class="art-switch" data-art="itemImmune" role="switch" aria-checked="false"><span class="art-knob"></span></button>
+    </div>
+    <p class="art-desc">开启后房主不受道具影响：冰冰冰冻不住 · 地雷踩不炸</p>
+  </div>
+
+  <!-- 成员倍速浮动条（被房主赠送神器后显示） -->
+  <div class="speed-panel" id="speedPanel">
+    <span class="sp-title">⚡ 倍速</span>
+    <input type="range" id="mySpeed" min="0.5" max="10" step="0.5" value="1">
+    <span class="sp-val" id="mySpeedVal">×1</span>
+  </div>
+
+  <!-- 右侧道具栏（捡到道具后显示，圆角方块 emoji；牛奶/橙子也是点击手动使用） -->
+  <div class="item-bar" id="itemBar">
+    <div class="it-cell" id="itemIce" title="🧊 冰冰冰：点击选择一名其他玩家，冻住 10 秒（期间虚化不能动；不能冻队友；不能叠加，10 秒内不能再拾取）。被冻者解冻后无敌 10 秒">
+      <span class="it-emoji">🧊</span><span class="it-count">×0</span>
+    </div>
+    <div class="it-cell" id="itemMilk" title="🥛 牛奶：点击喝下，身长随机 +67~91 格（空间不够沿边界转弯、平移让位再增长；可以连续喝，没有副作用）">
+      <span class="it-emoji">🥛</span><span class="it-count">×0</span>
+    </div>
+    <div class="it-cell" id="itemOrange" title="🍊 橙子：点击吃下，10 秒内 2x 移速且撞谁谁死（不能叠加；撞有神器的人无效）">
+      <span class="it-emoji">🍊</span><span class="it-count">×0</span>
+    </div>
+    <div class="it-cell" id="itemMine" title="💣 地雷：点击后在地图上选位置安放（隐形，5 分钟有效）。5×5 范围内谁踩到：长度 -500，其中 100 格奖给放置者，10 秒内移速 0.5x；长度不足 500 直接死亡">
+      <span class="it-emoji">💣</span><span class="it-count">×0</span>
+    </div>
+    <div class="it-cell" id="itemPotato" title="🍠 红薯：点击后在尾巴处生成 9×9 污染区，别人路过被熏停 5 秒；累计熏 2 人后污染消散（自己和队友免疫）">
+      <span class="it-emoji">🍠</span><span class="it-count">×0</span>
+    </div>
+  </div>
+
+  <!-- 道具图鉴（左上角圆形问号打开） -->
+  <div class="pause-overlay" id="itemHelpOverlay">
+    <div class="pause-box item-help-box">
+      <div class="pause-icon">❓</div>
+      <div class="msg">道具图鉴</div>
+      <div class="ih-list">
+        <div class="ih-row"><span class="ih-emoji">🧊</span>
+          <div class="ih-text"><b>冰冰冰</b><p>点击右侧道具栏，任选一名其他玩家冻住 10 秒（期间虚化、不能移动；不能冻队友；不能叠加，10 秒内不能再拾取）。被冻者解冻后获得 10 秒无敌：撞谁谁死且冻不住——队友可以碰醒被冻的你（碰你的队友自己被冻 1 秒并转向空旷区，四面被围则会死）</p></div>
+        </div>
+        <div class="ih-row"><span class="ih-emoji">🥛</span>
+          <div class="ih-text"><b>牛奶</b><p>点击右侧道具栏喝下：身长随机 +67~91 格（空间不够时沿边界转弯、平移让位再增长）。可以连续喝，没有副作用</p></div>
+        </div>
+        <div class="ih-row"><span class="ih-emoji">🍊</span>
+          <div class="ih-text"><b>橙子</b><p>点击右侧道具栏吃下：10 秒内 2x 移速，且撞谁谁死（不能叠加；撞有神器的人无效）</p></div>
+        </div>
+        <div class="ih-row"><span class="ih-emoji">💣</span>
+          <div class="ih-text"><b>地雷</b><p>点击右侧道具栏进入放置模式，在地图上选位置安放（隐形，5 分钟后失效）。5×5 范围内踩到者长度 -500：其中 100 格奖给放置者，其余消失；10 秒内移速 0.5x；长度不足 500 直接死亡</p></div>
+        </div>
+        <div class="ih-row"><span class="ih-emoji">🍠</span>
+          <div class="ih-text"><b>红薯</b><p>点击右侧道具栏吃下：在自己的尾巴位置生成一片 9×9 污染烟雾；别人路过就被熏停 5 秒（原地不能动），自己与队友免疫。累计熏到 2 个人后烟雾消散（最多存在 5 分钟）</p></div>
+        </div>
+      </div>
+      <p class="ih-tip">每 4×4 格最多刷新 1 个道具，与食物不重叠；蛇头 3×3 范围内即可拾取（不用碰到）；每种最多存 20 个；AI 不会捡道具；联机时房主可开关道具。<br>联机可现场邀请组队（玩家面板 🤝，一队最多 3 人）：队友互撞不死、不能互相冰冰冰、可碰醒被冻的队友；通关需身长正好达到整百。</p>
+      <button class="btn" id="btnItemHelpClose">知道了</button>
+    </div>
+  </div>
+
+  <!-- 冰块：选择冻住目标 -->
+  <div class="pause-overlay" id="iceOverlay">
+    <div class="pause-box ice-box">
+      <div class="pause-icon">🧊</div>
+      <div class="msg">选择要冻住的人</div>
+      <div class="ice-targets" id="iceTargets"></div>
+      <div class="win-actions">
+        <button class="btn ghost" id="btnIceCancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 组队邀请（现场邀请，一队最多 3 人） -->
+  <div class="pause-overlay" id="teamInviteOverlay">
+    <div class="pause-box ice-box">
+      <div class="pause-icon">🤝</div>
+      <div class="msg" id="teamInviteMsg">邀请你加入队伍</div>
+      <div class="ice-targets" id="teamInviteTip"></div>
+      <div class="win-actions">
+        <button class="btn" id="btnTeamAccept">接受</button>
+        <button class="btn ghost" id="btnTeamDeny">拒绝</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 队伍管理面板（聊天框 🤝 打开）：左 = 邀请组队，右 = 我的队伍（👑队长可踢人，队员可退出） -->
+  <div class="pause-overlay" id="teamPanelOverlay">
+    <div class="pause-box team-panel-box">
+      <div class="pause-icon">🤝</div>
+      <div class="msg">队伍 · 最先发起组队的是队长</div>
+      <div class="team-cols">
+        <div class="team-col">
+          <div class="team-col-title">邀请组队</div>
+          <div class="team-col-list" id="teamInviteList"></div>
+        </div>
+        <div class="team-col">
+          <div class="team-col-title" id="teamMyTitle">我的队伍</div>
+          <div class="team-col-list" id="teamMemberList"></div>
+        </div>
+      </div>
+      <div class="win-actions">
+        <button class="btn ghost" id="btnTeamPanelClose">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="players-panel" id="playersPanel"></div>
+
+  <!-- 皮肤选择面板（8 款全部可预览） -->
+  <div class="pause-overlay" id="skinOverlay">
+    <div class="pause-box skin-box">
+      <div class="pause-icon">🎨</div>
+      <div class="msg">选择皮肤</div>
+      <div class="skin-grid" id="skinGrid"></div>
+      <p class="ih-tip">点击即生效并自动保存；联机时会同步给房主，其他人也能看到你的皮肤。</p>
+      <div class="win-actions"><button class="btn ghost" id="btnSkinClose">关闭</button></div>
+    </div>
+  </div>
+
+  <!-- 弹窗大地图：周围高斯模糊，点蛇看信息 -->
+  <div class="map-overlay" id="mapOverlay">
+    <div class="map-box">
+      <div class="map-head"><span>🗺 全图</span><button class="btn ghost" id="btnMapClose">关闭</button></div>
+      <canvas id="bigMapCanvas" width="900" height="900"></canvas>
+      <div class="snake-info map-info" id="mapSnakeInfo"></div>
+      <p class="map-tip">点击地图上任意一条蛇查看它的信息</p>
+    </div>
+  </div>
+
+  <!-- 鼠标靠近蛇身时左侧弹出的信息卡 -->
+  <div class="snake-info" id="snakeInfo"></div>
+
+  <div class="respawn-overlay" id="respawnOverlay">
+    <div class="respawn-box">
+      <div class="dead-icon">💀</div>
+      <div class="msg">你被淘汰了</div>
+      <div class="countdown" id="respawnCount">3.0</div>
+    </div>
+  </div>
+
+  <!-- 联机：房主暂离时成员端等待 -->
+  <div class="respawn-overlay" id="awayOverlay">
+    <div class="respawn-box">
+      <div class="dead-icon">⏳</div>
+      <div class="msg">房主暂时离开</div>
+      <div class="countdown" id="awayTip">连接保持中，等待房主返回…</div>
+    </div>
+  </div>
+
+  <!-- 胜利结算 -->
+  <div class="pause-overlay" id="winOverlay">
+    <div class="pause-box">
+      <div class="pause-icon" id="winIcon">🏆</div>
+      <div class="msg" id="winMsg">获得胜利！</div>
+      <div class="countdown" id="winLen">身长 400</div>
+      <div class="win-actions">
+        <button class="btn" id="btnWinContinue">▶ 继续</button>
+        <button class="btn ghost" id="btnWinRestart">重新开始</button>
+        <button class="btn ghost" id="btnWinMenu">返回菜单</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 竞赛结算（时间到，按身长排名） -->
+  <div class="pause-overlay" id="compOverlay">
+    <div class="pause-box comp-box">
+      <div class="pause-icon">🏁</div>
+      <div class="msg">竞赛结束！最终排名</div>
+      <div class="countdown">按身长排名</div>
+      <div class="comp-ranks" id="compRanks"></div>
+      <div class="win-actions">
+        <button class="btn" id="btnCompRestart">重新开始</button>
+        <button class="btn ghost" id="btnCompMenu">返回菜单</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 被房主黑屏 -->
+  <div class="black-overlay" id="blackOverlay">
+    <div class="black-box">
+      <div class="black-icon">🌑</div>
+      <div class="black-msg">你已被房主黑屏</div>
+      <div class="black-tip">等待房主恢复…</div>
+    </div>
+  </div>
+
+  <!-- 手机端虚拟方向键（触屏设备显示） -->
+  <div class="dpad" id="dpad">
+    <button class="dpad-btn up" data-dir="up" aria-label="上">▲</button>
+    <button class="dpad-btn left" data-dir="left" aria-label="左">◀</button>
+    <button class="dpad-btn right" data-dir="right" aria-label="右">▶</button>
+    <button class="dpad-btn down" data-dir="down" aria-label="下">▼</button>
+  </div>
+
+  <div class="pause-overlay" id="pauseOverlay">
+    <div class="pause-box">
+      <div class="pause-icon">⏸</div>
+      <div class="msg">游戏已暂停</div>
+      <button class="btn" id="btnResume">继续游戏</button>
+      <button class="btn ghost" id="btnRestart">重新开始</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 2.5 联机大厅 ========== -->
+<div class="screen" id="scr-online">
+  <div class="online-wrap">
+    <div class="topbar">
+      <span class="me">🐍 <b id="onlineNick"></b></span>
+      <button class="btn ghost" id="btnOnlineBack">← 返回菜单</button>
+    </div>
+
+    <div class="card online-card">
+      <div class="tabs">
+        <button class="tab active" id="tabHost">我是房主</button>
+        <button class="tab" id="tabGuest">我是成员</button>
+      </div>
+
+      <!-- 房主 -->
+      <div class="pane" id="paneHost">
+        <div class="ai-row">
+          <label class="pane-label" for="aiCount">AI 蛇数量</label>
+          <select id="aiCount">
+            <option value="5" selected>5 条（默认）</option>
+            <option value="4">4 条</option>
+            <option value="3">3 条</option>
+            <option value="2">2 条</option>
+            <option value="1">1 条</option>
+            <option value="0">0 条（纯玩家对战）</option>
+          </select>
+        </div>
+
+        <div class="comp-card" id="compCard">
+          <div class="setting-header">
+            <h2 class="setting-title">🏁 竞赛模式（仅房主可设）</h2>
+          </div>
+          <div class="ai-row">
+            <label class="pane-label" for="compMinutes">时长</label>
+            <select id="compMinutes">
+              <option value="5">5 分钟</option>
+              <option value="10" selected>10 分钟</option>
+              <option value="15">15 分钟</option>
+              <option value="20">20 分钟</option>
+              <option value="30">30 分钟</option>
+              <option value="60">60 分钟</option>
+            </select>
+          </div>
+          <label class="comp-toggle"><input type="checkbox" id="compOn"> 开启竞赛：时间到后按身长排名结算</label>
+        </div>
+
+        <div class="comp-card" id="itemCardHost">
+          <div class="setting-header">
+            <h2 class="setting-title">🎒 道具（仅房主可设）</h2>
+          </div>
+          <label class="comp-toggle"><input type="checkbox" id="itemsOnHost"> 开启道具：🧊 冰冰冰 / 🥛 牛奶 / 🍊 橙子 / 💣 地雷</label>
+          <p class="online-tip">任何地图都能开；每 4×4 格最多 1 个，与食物不重叠；AI 不会捡道具。建房后调整需重新进游戏/重开生效。</p>
+        </div>
+
+        <div class="step">🚀 方式一 · 本地服务器联机（推荐，成员点链接即进）</div>
+        <p class="online-tip server-mode-note" hidden>⚠ 当前是 HTTPS 页面，浏览器禁止连接局域网服务器。请从房主电脑运行 1.exe 后，用控制台打印的 http://IP:端口 网址打开本游戏。</p>
+        <a class="btn dl" id="btnDownloadExe" href="https://github.com/lpjsw114514-ui/sheshedazuozhan/releases/latest/download/1.exe" target="_blank" rel="noopener">📥 下载联机服务端 1.exe（仅房主需要，约 85MB）</a>
+        <div class="ai-row">
+          <label class="pane-label" for="serverHost">服务器地址</label>
+          <input type="text" id="serverHost" maxlength="21" placeholder="运行 1.exe 的电脑 IP:端口，如 192.168.1.5:9600" autocomplete="off">
+        </div>
+        <div class="ai-row">
+          <label class="pane-label" for="roomNo">房间号（6 位数字）</label>
+          <input type="text" id="roomNo" maxlength="6" placeholder="留空自动生成，如 123456" autocomplete="off" inputmode="numeric">
+        </div>
+        <button class="btn" id="btnServerCreate">🖥 创建服务器房间</button>
+        <div class="server-share" id="serverShare" hidden>
+          <div class="step">第 2 步 · 把成员链接发到群里（点开即入房）：</div>
+          <input type="text" id="serverShareUrl" readonly>
+          <button class="btn ghost small" id="btnCopyShareUrl">📋 复制成员链接</button>
+        </div>
+        <button class="btn" id="btnHostStart">🎮 进入游戏</button>
+        <p class="online-tip">房主需保持 1.exe 窗口和本页面打开；关闭任一 = 房间解散。</p>
+
+        <hr class="divider">
+        <div class="step">方式二 · 手动邀请码（无需任何程序，跨网络也能用）</div>
+        <button class="btn ghost" id="btnCreateRoom">生成邀请码房间</button>
+        <textarea id="inviteCode" rows="3" readonly placeholder="邀请码将显示在这里（已压缩，约 1KB）"></textarea>
+        <div class="code-meta"><span id="inviteLen"></span><button class="btn ghost small" id="btnCopyInvite">📋 复制邀请码</button></div>
+        <div class="step">把成员的回传码粘贴进来</div>
+        <textarea id="answerIn" rows="3" placeholder="粘贴成员回传的「应答码」"></textarea>
+        <button class="btn ghost" id="btnAcceptAnswer">✅ 确认该成员连接</button>
+        <hr class="divider">
+        <label class="pane-label" for="hostIp">本机局域网 IP（可选，连不上时填写）</label>
+        <input type="text" id="hostIp" maxlength="15" placeholder="如 192.168.1.5，不知道可留空" autocomplete="off">
+        <p class="online-tip">查看方法：Win+R → 输入 cmd → 输入 ipconfig → 看「IPv4 地址」。<br>填写后邀请码会带上真实 IP，可解决浏览器隐藏本机 IP 导致的连不上。</p>
+        <p class="online-tip">每来一位新成员，需再点一次「生成邀请码房间」。<br>房主刷新页面 = 房间解散；房主页面请保持前台打开。</p>
+      </div>
+
+      <!-- 成员 -->
+      <div class="pane" id="paneGuest" hidden>
+        <div class="step">🚀 方式一 · 输入服务器地址 + 房间号加入</div>
+        <p class="online-tip server-mode-note" hidden>⚠ 当前是 HTTPS 页面，浏览器禁止连接局域网服务器。请直接点开房主发的成员链接（http://IP:端口/?room=NNNNNN）。</p>
+        <div class="ai-row">
+          <label class="pane-label" for="serverHostG">服务器地址</label>
+          <input type="text" id="serverHostG" maxlength="21" placeholder="房主的 IP:端口，如 192.168.1.5:9600" autocomplete="off">
+        </div>
+        <div class="ai-row">
+          <label class="pane-label" for="roomIn">房间号（6 位）</label>
+          <input type="text" id="roomIn" maxlength="6" placeholder="房主给的 6 位房间号" autocomplete="off" inputmode="numeric">
+        </div>
+        <button class="btn" id="btnServerJoin">🚀 加入服务器房间</button>
+        <p class="online-tip">最省事的方式：直接点开房主发的成员链接，会自动带上房间号。</p>
+
+        <hr class="divider">
+        <div class="step">方式二 · 手动邀请码（无需任何程序）</div>
+        <textarea id="inviteIn" rows="3" placeholder="粘贴房主的「邀请码」"></textarea>
+        <button class="btn ghost" id="btnJoinRoom">🔑 生成我的应答码</button>
+        <div class="step">把应答码发回给房主</div>
+        <textarea id="answerCode" rows="3" readonly placeholder="应答码将显示在这里（已压缩，约 1KB）"></textarea>
+        <div class="code-meta"><span id="answerLen"></span><button class="btn ghost small" id="btnCopyAnswer">📋 复制应答码</button></div>
+        <hr class="divider">
+        <label class="pane-label" for="guestIp">本机局域网 IP（可选，连不上时填写）</label>
+        <input type="text" id="guestIp" maxlength="15" placeholder="如 192.168.1.8，不知道可留空" autocomplete="off">
+        <p class="online-tip">查看方法：Win+R → 输入 cmd → 输入 ipconfig → 看「IPv4 地址」。</p>
+        <p class="online-tip">发给房主后等他点「确认该成员连接」，收到游戏画面即自动进房。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="net.js"></script>
+<script src="game.js"></script>
 </body>
 </html>
