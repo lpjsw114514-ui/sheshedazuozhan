@@ -10,20 +10,26 @@
       之后所有游戏消息都经此转发——房主电脑即服务器。
 
    用法：
-     双击运行 → 控制台会打印「房主打开 / 成员打开」两个网址
+     双击 1.exe → 主服务器：控制台打印「房主打开 / 成员打开」两个网址
+     双击 2.exe → 辅助节点：自动探测局域网里的 1.exe；探测不到会提示输入 IP
      1.exe --port 9600            自定义端口（默认 9600）
      1.exe --room 123456          自定义房间号（默认随机 6 位）
      1.exe --node 192.168.1.5:9600
                                  辅助节点模式：接入另一台跑着 1.exe 的主服务器，
                                  本机只接待成员并把消息中转给主服务器（接力带宽/
                                  分流主电脑连接负担）；可多台级联
+     2.exe 192.168.1.5            也可直接在命令行带主服务器地址
 
    说明：
-     - 每个 exe 实例 = 一个房间；关闭窗口 = 房间解散
+     - 每台 exe = 一个服务器进程；1.exe 主（房主权威在它的浏览器），2.exe 辅助（分流成员连接/消息）
      - 房主刷新页面有 60 秒宽限，期间成员保持连接等待
      - 辅助节点不接待房主（房主权威仍在主服务器那台电脑的浏览器）
+     - 局域网发现用 UDP 9602 广播；探测失败时控制台手动输入主服务器 IP
    ========================================================= */
 const http = require('http');
+const net = require('net');
+const dgram = require('dgram');
+const readline = require('readline');
 const crypto = require('crypto');
 const os = require('os');
 const fs = require('fs');
@@ -38,12 +44,100 @@ function argOf(name, def){
   if (i >= 0 && process.argv[i + 1]) return process.argv[i + 1];
   return def;
 }
-const PORT = Math.max(1, Math.min(65535, parseInt(argOf('port', process.env.PORT || '9600'), 10) || 9600));
+/* 构建标记：2.exe 由 build.js 注入 true → 默认进辅助节点模式 */
+const FORCE_NODE = false; /*__FORCE_NODE__*/
+const PORT = Math.max(1, Math.min(65535, parseInt(argOf('port', process.env.PORT || (FORCE_NODE ? '9601' : '9600')), 10) || (FORCE_NODE ? 9601 : 9600)));
 let ROOM = String(argOf('room', '')).replace(/\D/g, '').slice(0, 6);
 if (ROOM.length !== 6) ROOM = String(Math.floor(Math.random() * 900000) + 100000);
 /* 辅助节点模式：--node 主服务器地址（host:port）。本机转为「成员中转站」 */
-const NODE_MODE = String(argOf('node', '')).trim();
+let NODE_MODE = String(argOf('node', '')).trim();
+/* 2.exe 命令行位置参数：2.exe 192.168.1.5[:9600] */
+if (!NODE_MODE && FORCE_NODE){
+  /* 位置参数：跳过 --xxx 及其值，剩下的第一个即主服务器地址 */
+  const optsWithValue = ['--port', '--room', '--node'];
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++){
+    const a = args[i];
+    if (a.startsWith('--')){ if (optsWithValue.includes(a)) i++; continue; }
+    NODE_MODE = a; break;
+  }
+}
 let MASTER_ROOM = ''; // 辅助节点：从主服务器同步到的房间号（注入页面用）
+
+/* ---------------- 局域网发现（UDP 9602 广播） ----------------
+   1.exe 监听发现请求并回 own IP:PORT/ROOM；2.exe 广播探测，
+   取第一个应答作为主服务器地址。防火墙拦 UDP 时回退到手动输入。 */
+const DISCOVERY_PORT = 9602;
+const MAGIC_Q = 'SNAKE_MASTER_Q';
+const MAGIC_A = 'SNAKE_MASTER_A';
+
+function startDiscoveryServer(){
+  try {
+    const sock = dgram.createSocket('udp4');
+    sock.on('message', (msg, rinfo) => {
+      if (msg.toString('utf8').slice(0, MAGIC_Q.length) !== MAGIC_Q) return;
+      const reply = Buffer.from(MAGIC_A + '|' + ROOM + '|' + PORT, 'utf8');
+      try { sock.send(reply, rinfo.port, rinfo.address); } catch (e) {}
+    });
+    sock.on('error', () => {});
+    sock.bind(DISCOVERY_PORT, () => { try { sock.setBroadcast(true); } catch (e) {} });
+  } catch (e) {}
+}
+
+function discoverMaster(timeoutMs){
+  return new Promise(resolve => {
+    let sock;
+    try { sock = dgram.createSocket('udp4'); }
+    catch (e) { resolve(null); return; }
+    let done = false, timer = null;
+    const finish = val => {
+      if (done) return; done = true;
+      if (timer) clearTimeout(timer);
+      try { sock.close(); } catch (e) {}
+      resolve(val);
+    };
+    sock.on('message', (msg, rinfo) => {
+      const txt = msg.toString('utf8');
+      if (txt.slice(0, MAGIC_A.length) !== MAGIC_A) return;
+      const parts = txt.split('|');
+      finish({ host: rinfo.address, port: parseInt(parts[2], 10) || 9600, room: (parts[1] || '').trim() });
+    });
+    sock.on('error', () => finish(null));
+    sock.bind(0, () => {
+      try { sock.setBroadcast(true); } catch (e) {}
+      const q = Buffer.from(MAGIC_Q, 'utf8');
+      /* 定向广播 + 全局广播：多个网卡都试一遍 */
+      const targets = [];
+      for (const ip of lanAddresses()){
+        const m = ip.match(/^(\d+)\.(\d+)\.(\d+)\./);
+        if (m) targets.push(m[1] + '.' + m[2] + '.' + m[3] + '.255');
+      }
+      targets.push('255.255.255.255');
+      for (const t of targets){ try { sock.send(q, DISCOVERY_PORT, t); } catch (e) {} }
+      timer = setTimeout(() => finish(null), timeoutMs || 2500);
+    });
+  });
+}
+
+function promptMaster(){
+  return new Promise(resolve => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    console.log('');
+    console.log('   未自动发现主服务器。请在另一台电脑运行 1.exe，然后输入它的地址。');
+    console.log('   格式：IP 或 IP:端口（例如 192.168.1.5 或 192.168.1.5:9600）');
+    let done = false;
+    const answer = val => {
+      if (done) return; done = true;
+      try { rl.close(); } catch (e) {}
+      const v = String(val || '').trim().replace(/^wss?:\/\//i, '').replace(/\/+.*$/, '');
+      if (!v){ resolve(null); return; }
+      const m = v.match(/^([^:]+)(?::(\d+))?$/);
+      resolve(m ? { host: m[1], port: parseInt(m[2], 10) || 9600 } : null);
+    };
+    rl.on('close', () => { if (!done) answer(''); });
+    rl.question('   主服务器地址 > ', answer);
+  });
+}
 
 /* ---------------- 内嵌静态资源 ----------------
    构建 1.exe 时由构建脚本注入（gzip+base64）；
@@ -478,7 +572,9 @@ const nodeLocals = new Map();  // 全局 id -> 本地编号
 let nodeLocalSeq = 0;
 
 function masterAddrParsed(){
-  const a = NODE_MODE.replace(/^wss?:\/\//i, '').replace(/\/+.*$/, '');
+  const a = String(NODE_MODE || '').replace(/^wss?:\/\//i, '').replace(/\/+.*$/, '').trim();
+  /* 纯数字 = 同机端口，例如 2.exe 19611 */
+  if (/^\d+$/.test(a)) return { host: '127.0.0.1', port: parseInt(a, 10) };
   const m = a.match(/^([^:]+)(?::(\d+))?$/);
   return { host: m ? m[1] : a, port: (m && m[2]) ? parseInt(m[2], 10) : 9600 };
 }
@@ -621,13 +717,31 @@ function onNodeRelay(sock, msg){
   // 节点上的成员发 kick 等：忽略（只有房主能踢人）
 }
 /* ---------------- 启动 ---------------- */
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   const ips = lanAddresses();
   const line = '==================================================';
+  /* 主服务器开启 UDP 发现应答（供 2.exe 自动找到本机） */
+  if (!NODE_MODE && !FORCE_NODE) startDiscoveryServer();
+  /* 2.exe：未指定地址时先自动探测，失败再提示输入 */
+  if (FORCE_NODE && !NODE_MODE){
+    console.log('\n' + line);
+    console.log('   🐍 蛇蛇大作战 · 辅助节点（2.exe）正在启动…');
+    console.log('   正在探测局域网里的主服务器（1.exe）…');
+    console.log(line + '\n');
+    const found = await discoverMaster(2500);
+    if (found){
+      NODE_MODE = found.host + ':' + found.port;
+      if (found.room) MASTER_ROOM = found.room;
+      console.log('[辅助节点] 自动发现主服务器 ' + NODE_MODE + (found.room ? '（房间 ' + found.room + '）' : ''));
+    } else {
+      const typed = await promptMaster();
+      if (typed) NODE_MODE = typed.host + ':' + typed.port;
+    }
+  }
   if (NODE_MODE){
     const a = masterAddrParsed();
     console.log('\n' + line);
-    console.log('   🐍 蛇蛇大作战 · 辅助节点模式');
+    console.log('   🐍 蛇蛇大作战 · 辅助节点（2.exe）');
     console.log('   --------------------------------------------------');
     console.log('   主服务器：' + a.host + ':' + a.port);
     console.log('   本机端口：' + PORT + '（接待成员并转接主服务器）');
@@ -661,12 +775,13 @@ server.listen(PORT, () => {
   console.log('   本机调试： http://localhost:' + PORT);
   console.log('   --------------------------------------------------');
   console.log('   保持此窗口打开 = 房间保持；关闭 = 房间解散');
+  console.log('   分流：另一台电脑双击 2.exe 即可自动接入本机分担压力');
   console.log('   自定义：1.exe --port 9601 --room 123456');
   console.log(line + '\n');
 });
 server.on('error', e => {
   if (e.code === 'EADDRINUSE'){
-    console.error('❌ 端口 ' + PORT + ' 已被占用。换一个端口再试：1.exe --port 9601');
+    console.error('❌ 端口 ' + PORT + ' 已被占用。换一个端口再试：' + (FORCE_NODE ? '2.exe --port 9603' : '1.exe --port 9601'));
   } else {
     console.error('❌ 服务器错误：' + e.message);
   }
